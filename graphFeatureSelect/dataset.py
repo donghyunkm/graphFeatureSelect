@@ -61,7 +61,7 @@ class AnnDataGraphDataset(Dataset):
         # create binary adjacency matrix without self-loops
         adj = self.adata.obsp["connectivities"].copy()
         adj = adj.astype(bool).astype(int)
-        adj[self.adata.obsp["distances"] > self.d_threshold] = 0
+        adj[self.adata.obsp["distances"] > self.d_threshold] = 0 # the distances/connectivities are already thresholded by scanpy.pp.neighbors
         adj.setdiag(0)
 
         # create adjacency matrices up to max_order

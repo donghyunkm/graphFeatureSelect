@@ -8,7 +8,7 @@ from torch_geometric.nn import GATv2Conv
 class GAT3(torch.nn.Module):
     def __init__(self, hidden_channels, num_features, num_classes):
         super().__init__()
-        torch.manual_seed(1234567)
+        # torch.manual_seed(1234567)
         self.hidden_channels = hidden_channels
         self.num_features = num_features
         self.num_classes = num_classes
@@ -19,6 +19,30 @@ class GAT3(torch.nn.Module):
         self.dropout = nn.Dropout(0.25)
     def forward(self, x, edge_index):
         residual1 = self.lin1(x)
+
+        out = self.conv1(x, edge_index)
+        out = out.relu()
+        out = self.dropout(out)        
+        out = self.conv2(out, edge_index)
+        
+        out = out + residual1
+
+        return out
+
+class GAT3_xyz(torch.nn.Module):
+    def __init__(self, hidden_channels, num_features, num_classes):
+        super().__init__()
+        # torch.manual_seed(1234567)
+        self.hidden_channels = hidden_channels
+        self.num_features = num_features
+        self.num_classes = num_classes
+        self.conv1 = GATv2Conv(self.num_features, self.hidden_channels, heads = 8, concat = False)
+        self.conv2 = GATv2Conv(self.hidden_channels, self.num_classes, heads = 8, concat = False)
+        self.lin1 = nn.Linear(self.num_features, self.num_classes)
+
+        self.dropout = nn.Dropout(0.25)
+    def forward(self, x, edge_index, xyz):
+        residual1 = self.lin1(x)
         out = self.conv1(x, edge_index)
         out = out.relu()
         out = self.dropout(out)        
@@ -26,18 +50,39 @@ class GAT3(torch.nn.Module):
         out = out + residual1
 
         return out
-    
+
+
+class MLP_2layer(torch.nn.Module):
+    def __init__(self, hidden_channels, num_features, num_classes):
+        super().__init__()
+        # torch.manual_seed(1234567)
+        self.hidden_channels = hidden_channels
+        self.num_features = num_features
+        self.num_classes = num_classes
+        self.lin1 = nn.Linear(self.num_features, self.hidden_channels)
+        self.lin2 = nn.Linear(self.hidden_channels, self.num_classes)
+        self.dropout = nn.Dropout(0.25)
+    def forward(self, x, edge_index):
+        out = self.lin1(x)
+        out = out.relu()
+        out = self.dropout(out)        
+        out = self.lin2(out)
+
+        return out
+
 
 
 class GNN(L.LightningModule):
-    def __init__(self, input_dim, hidden_dim, n_labels, weight_mse=1.0, weight_ce=1.0):
+    def __init__(self, input_dim, hidden_dim, n_labels, weight_mse=1.0, weight_ce=1.0, model_type = "GAT3"):
         super(GNN, self).__init__()
 
         self.weight_mse = weight_mse
         self.weight_ce = weight_ce
         self.n_labels = n_labels
-        self.GAT = GAT3(hidden_channels=32, num_features = input_dim, num_classes=self.n_labels)
-
+        if model_type == "GAT3":
+            self.model = GAT3(hidden_channels=32, num_features = input_dim, num_classes=self.n_labels)
+        elif model_type == "MLP_2layer":
+            self.model = MLP_2layer(hidden_channels=32, num_features = input_dim, num_classes=self.n_labels)
         # losses
         self.loss_ce = nn.CrossEntropyLoss()
 
@@ -53,7 +98,7 @@ class GNN(L.LightningModule):
         )
 
     def forward(self, x, edge_index):
-        celltype = self.GAT(x, edge_index)
+        celltype = self.model(x, edge_index)
         return celltype
 
     def training_step(self, batch, batch_idx):
