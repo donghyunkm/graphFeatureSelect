@@ -28,7 +28,7 @@ def get_adata(path: str):
     return adata
 
 
-
+# datareaders.py functionality from nichecompass
 def get_paths(verbose: bool = False) -> dict:
     """
     Get custom paths from config.toml that is in the root directory.
