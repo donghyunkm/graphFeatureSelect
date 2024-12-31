@@ -10,8 +10,6 @@ import numpy as np
 import scipy.sparse as sp
 import torch
 from graphFeatureSelect.utils import get_paths
-# from .utils import sparse_mx_to_sparse_tensor
-
 
 class AnnDataGraphDataset(Dataset):
     """
@@ -78,9 +76,9 @@ class AnnDataGraphDataset(Dataset):
         self.data_issparse = issparse(adata.X)
 
         if self.data_issparse: 
-            self.x = torch.tensor(adata.X.toarray())
+            self.x = torch.tensor(adata.X.toarray()).float()
         else:
-            self.x = torch.tensor(adata.X)
+            self.x = torch.tensor(adata.X).float()
 
         self.edge_index = self.convert_torch_sparse_coo(adj)
 
@@ -107,7 +105,7 @@ class AnnDataGraphDataset(Dataset):
 
     def __getitem__(self, idx):
         idx = [idx]
-        gene_exp = self.adata.X[idx, :]
+        gene_exp = self.adata.X[idx, :].float()
         if self.data_issparse:
             gene_exp = (gene_exp.toarray().astype(np.float32))
         xyz = self.adata.obs.iloc[idx][self.spatial_coords].values.astype(np.float32)

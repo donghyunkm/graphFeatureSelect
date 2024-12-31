@@ -19,6 +19,6 @@ sleep 10s
 
 export PATH=/data/users1/dkim195/miniconda3/bin:$PATH
 source /data/users1/dkim195/miniconda3/etc/profile.d/conda.sh
-conda activate /data/users1/dkim195/miniconda3/envs/allen
+conda activate /data/users1/dkim195/miniconda3/envs/allen2
 python trainer.py
 sleep 30s

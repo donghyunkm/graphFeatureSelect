@@ -10,9 +10,8 @@ from torch_geometric.loader.neighbor_loader import NeighborLoader
 from sklearn.model_selection import train_test_split
 from torch_geometric.data import Data
 
-# from graphFeatureSelect.dataset import AnnDataGraphDataset
 from graphFeatureSelect.utils import get_paths
-from .datasets import AnnDataGraphDataset
+from graphFeatureSelect.datasets import AnnDataGraphDataset
 from torch_geometric.transforms import RandomNodeSplit, NodePropertySplit
 
 
@@ -46,7 +45,7 @@ class AnnDataGraphDataModule(L.LightningDataModule):
         return data
 
 
-    def setup(self):
+    def setup(self, stage = None):
         dataset = AnnDataGraphDataset(self.adata_paths)
 
         data = Data(x = dataset.x, edge_index = dataset.edge_index, labels = dataset.labels)

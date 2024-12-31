@@ -19,7 +19,7 @@ def setup_seeds(seed):
 
 
 seed = 42
-model_type = "MLP_2layer"
+model_type = "GAT"
 setup_seeds(seed)
 # data parameters, we'll eventually obtain this from the data. 
 n_genes = 500
@@ -38,7 +38,7 @@ checkpoint_callback = ModelCheckpoint(
 )
 
 # data, model and fitting
-datamodule = AnnDataGraphDataModule(data_dir=paths["data_root"], file_names=["VISp_nhood.h5ad"], batch_size=1)
+datamodule = AnnDataGraphDataModule(data_dir=paths["data_root"], file_names=["VISp_nhood.h5ad"], batch_size=1, n_hops=2)
 model = GNN(input_dim=n_genes, hidden_dim = 32, n_labels=n_labels, weight_mse=1.0, weight_ce=0.1, model_type=model_type)
 trainer = L.Trainer(limit_train_batches=1000, limit_val_batches=100, max_epochs=1000, logger=tb_logger, callbacks=[checkpoint_callback])
 trainer.fit(model=model, datamodule=datamodule)
