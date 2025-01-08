@@ -4,6 +4,7 @@ import torch.nn as nn
 from torchmetrics import MeanSquaredError
 from torchmetrics.classification import MulticlassAccuracy
 from torch_geometric.nn import GATv2Conv
+from graphFeatureSelect.MPNN import MPNNs
 
 class GAT(torch.nn.Module):
     def __init__(self, hidden_channels, num_features, num_classes):
@@ -21,6 +22,7 @@ class GAT(torch.nn.Module):
         residual1 = self.lin1(x)
 
         out = self.conv1(x, edge_index)
+        
         out = out.relu()
         out = self.dropout(out)        
         out = self.conv2(out, edge_index)
@@ -73,16 +75,14 @@ class MLP_2layer(torch.nn.Module):
 
 
 class GNN(L.LightningModule):
-    def __init__(self, input_dim, hidden_dim, n_labels, weight_mse=1.0, weight_ce=1.0, model_type = "GAT"):
+    def __init__(self, input_dim, hidden_dim, n_labels, weight_mse=1.0, weight_ce=1.0, local_layers=2, 
+                        dropout=0.5, heads=1, pre_linear=True, res=True, ln=True, bn=False, jk=True, x_res=True, gnn='gat'):
         super(GNN, self).__init__()
 
         self.weight_mse = weight_mse
         self.weight_ce = weight_ce
         self.n_labels = n_labels
-        if model_type == "GAT":
-            self.model = GAT(hidden_channels=32, num_features = input_dim, num_classes=self.n_labels)
-        elif model_type == "MLP":
-            self.model = MLP_2layer(hidden_channels=32, num_features = input_dim, num_classes=self.n_labels)
+        self.model = MPNNs(input_dim, hidden_dim, n_labels, local_layers, dropout, heads, pre_linear, res, ln, bn, jk, gnn)
         # losses
         self.loss_ce = nn.CrossEntropyLoss()
 
