@@ -6,7 +6,7 @@ import torch.nn as nn
     
 class MPNNs(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels, local_layers=2, 
-                 dropout=0.5, heads=8, pre_linear=True, res=True, ln=True, bn=False, jk=True, x_res=True, gnn='gcn'):
+                 dropout=0.5, heads=8, pre_linear=True, res=True, ln=True, bn=False, jk=True, x_res=True, gnn='gcn', xyz_status=True):
         super(MPNNs, self).__init__()
 
         self.dropout = dropout
@@ -17,7 +17,7 @@ class MPNNs(torch.nn.Module):
         self.bn = bn
         self.jk = jk
         self.x_res = x_res
-        
+        self.xyz_status = xyz_status
         self.h_lins = torch.nn.ModuleList()
         self.local_convs = torch.nn.ModuleList()
         self.lins = torch.nn.ModuleList()
@@ -29,7 +29,7 @@ class MPNNs(torch.nn.Module):
         if not self.pre_linear:
             if gnn=='gat':
                 self.local_convs.append(GATConv(in_channels, hidden_channels, heads=heads,
-                    concat=True, add_self_loops=False, bias=False))
+                    concat=False, add_self_loops=False, bias=False))
             elif gnn=='sage':
                 self.local_convs.append(SAGEConv(in_channels, hidden_channels))
             else:
@@ -43,7 +43,7 @@ class MPNNs(torch.nn.Module):
         for _ in range(local_layers):
             if gnn=='gat':
                 self.local_convs.append(GATConv(hidden_channels, hidden_channels, heads=heads,
-                    concat=True, add_self_loops=False, bias=False))
+                    concat=False, add_self_loops=False, bias=False))
             elif gnn=='sage':
                 self.local_convs.append(SAGEConv(hidden_channels, hidden_channels))
             else:
@@ -57,6 +57,8 @@ class MPNNs(torch.nn.Module):
         
         if self.x_res:
             self.res_lin = torch.nn.Linear(in_channels, out_channels)
+        if self.xyz_status:
+            self.xyz_lin = torch.nn.Linear(2, out_channels)
 
     def reset_parameters(self):
         for local_conv in self.local_convs:
@@ -69,12 +71,14 @@ class MPNNs(torch.nn.Module):
             bn.reset_parameters()
         self.lin_in.reset_parameters()
         self.pred_local.reset_parameters()
-
-
-    def forward(self, x, edge_index):
+        self.res_lin.reset_parameters()
+        self.xyz_lin.reset_parameters()
+    def forward(self, x, edge_index, xyz):
 
         if self.x_res:
             x_to_add = self.res_lin(x)
+        if self.xyz_status:
+            xyz = self.xyz_lin(xyz)
 
         if self.pre_linear:
             x = self.lin_in(x)
@@ -104,5 +108,7 @@ class MPNNs(torch.nn.Module):
 
         if self.x_res:
             x = x + x_to_add
+        if self.xyz_status:
+            x = x + xyz
 
         return x

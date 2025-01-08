@@ -83,6 +83,9 @@ class AnnDataGraphDataset(Dataset):
         self.edge_index = self.convert_torch_sparse_coo(adj)
 
         self.labels = self.cell_type_labelencoder.transform(self.adata.obs.iloc[[i for i in range(self.adata.shape[0])]][self.cell_type])
+        self.xyz = torch.tensor(self.adata.obs[['x_section', 'y_section']].values).float()
+
+        self.x = torch.cat((self.x, self.xyz), 1) # gene expr and xyz part of same row
 
     def convert_torch_sparse_coo(self, adj):
         csr = adj
@@ -110,7 +113,7 @@ class AnnDataGraphDataset(Dataset):
             gene_exp = (gene_exp.toarray().astype(np.float32))
         xyz = self.adata.obs.iloc[idx][self.spatial_coords].values.astype(np.float32)
         celltype = self.cell_type_labelencoder.transform(self.adata.obs.iloc[idx][self.cell_type])
-        return gene_exp, celltype
+        return gene_exp, celltype, xyz
 
 
 def get_non_blank_genes(adata):

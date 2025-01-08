@@ -5,6 +5,7 @@ from torchmetrics import MeanSquaredError
 from torchmetrics.classification import MulticlassAccuracy
 from torch_geometric.nn import GATv2Conv
 from graphFeatureSelect.MPNN import MPNNs
+import torch_geometric.transforms as T
 
 class GAT(torch.nn.Module):
     def __init__(self, hidden_channels, num_features, num_classes):
@@ -76,13 +77,14 @@ class MLP_2layer(torch.nn.Module):
 
 class GNN(L.LightningModule):
     def __init__(self, input_dim, hidden_dim, n_labels, weight_mse=1.0, weight_ce=1.0, local_layers=2, 
-                        dropout=0.5, heads=1, pre_linear=True, res=True, ln=True, bn=False, jk=True, x_res=True, gnn='gat'):
+                        dropout=0.5, heads=1, pre_linear=True, res=True, ln=True, bn=False, jk=True, x_res=True, gnn='gat', halfhop=False, xyz_status=True):
         super(GNN, self).__init__()
 
         self.weight_mse = weight_mse
         self.weight_ce = weight_ce
         self.n_labels = n_labels
-        self.model = MPNNs(input_dim, hidden_dim, n_labels, local_layers, dropout, heads, pre_linear, res, ln, bn, jk, gnn)
+        self.halfhop = halfhop
+        self.model = MPNNs(input_dim, hidden_dim, n_labels, local_layers, dropout, heads, pre_linear, res, ln, bn, jk, x_res, gnn, xyz_status)
         # losses
         self.loss_ce = nn.CrossEntropyLoss()
 
@@ -97,17 +99,30 @@ class GNN(L.LightningModule):
             num_classes=self.n_labels, top_k=1, average=None, multidim_average="global"
         )
 
-    def forward(self, x, edge_index):
-        celltype = self.model(x, edge_index)
+    def forward(self, x, edge_index, xyz):
+        celltype = self.model(x, edge_index, xyz)
         return celltype
 
     def training_step(self, batch, batch_idx):
         # for GNN, batch size should be 1, and there isn't a batch dimension.
         data = batch
-        gene_exp = data.x
-        edgelist = data.edge_index
-        celltype = data.labels
-        celltype_pred = self.forward(gene_exp, edgelist)
+        # add half hop here 
+        if not self.halfhop:
+            gene_exp = data.x[:,:-2]
+            edgelist = data.edge_index
+            celltype = data.labels
+            xyz = data.x[:, -2:]
+            celltype_pred = self.forward(gene_exp, edgelist, xyz)
+        else:
+            transform = T.HalfHop(alpha=0.5)
+            data = transform(data)
+            gene_exp = data.x[:, :-2]
+            edgelist = data.edge_index
+            celltype = data.labels
+            xyz = data.x[:, -2:]
+            aug_mask = data.slow_node_mask
+            celltype_pred = self.forward(gene_exp, edgelist, xyz)
+            celltype_pred = celltype_pred[~aug_mask]
 
         # Calculate losses
         total_loss = self.loss_ce(celltype_pred, celltype.squeeze())
@@ -131,11 +146,12 @@ class GNN(L.LightningModule):
     def validation_step(self, batch, batch_idx):
         # for GNN, batch size should be 1, and there isn't a batch dimension.
         data = batch
-        gene_exp = data.x
+        gene_exp = data.x[:, :-2]
         edgelist = data.edge_index
         celltype = data.labels
+        xyz = data.x[:,-2:]
 
-        celltype_pred = self.forward(gene_exp, edgelist)
+        celltype_pred = self.forward(gene_exp, edgelist, xyz)
         celltype_pred_max = celltype_pred.argmax(dim=1)
         # Calculate metrics
         val_overall_acc = self.metric_overall_acc(preds=celltype_pred_max, target=celltype)

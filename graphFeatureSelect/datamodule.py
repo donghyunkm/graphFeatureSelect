@@ -49,8 +49,8 @@ class AnnDataGraphDataModule(L.LightningDataModule):
         dataset = AnnDataGraphDataset(self.adata_paths)
 
         data = Data(x = dataset.x, edge_index = dataset.edge_index, labels = dataset.labels)
-        self.data = self.node_mask("rand", data) # check if it returns a mask?
-
+        self.data = self.node_mask("rand", data)
+        self.dataset = dataset
                     
     def train_dataloader(self):
         return NeighborLoader(self.data, input_nodes=self.data.train_mask, num_neighbors=[-1]*self.n_hops, batch_size=self.batch_size, directed=False, shuffle=True, num_workers=16)
