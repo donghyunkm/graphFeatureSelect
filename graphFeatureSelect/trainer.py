@@ -1,6 +1,12 @@
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger
+from sklearn.model_selection import StratifiedKFold
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegressionCV, LogisticRegression
+from sklearn.metrics import accuracy_score
+from sklearn.dummy import DummyClassifier
 
 from graphFeatureSelect.datamodule import AnnDataGraphDataModule
 from graphFeatureSelect.models import GNN, GNN_concrete
@@ -17,6 +23,37 @@ def setup_seeds(seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+def linear_predict(x, y, train_idx, test_idx):
+    x_train = x[train_idx, :]
+    x_test = x[test_idx, :]
+    y_train = y[train_idx]
+    y_test = y[test_idx]
+
+    # scale input - regularization with logistic regression is sensitive to scale.
+    model = make_pipeline(StandardScaler(), LogisticRegression(random_state=42, solver='saga', n_jobs=-1))
+    model.fit(x_train, y_train)
+    y_pred_train = model.predict(x_train)
+    y_pred_test = model.predict(x_test)
+    acc_train = accuracy_score(y_train, y_pred_train)
+    acc_test = accuracy_score(y_test, y_pred_test)
+
+    return acc_train, acc_test
+
+
+def rand_predict(x, y, train_idx, test_idx):
+    x_train = x[train_idx, :]
+    x_test = x[test_idx, :]
+    y_train = y[train_idx]
+    y_test = y[test_idx]
+
+    strategies = ["prior", "stratified", "uniform"]
+    test_scores = {}
+    for s in strategies:
+        dclf = DummyClassifier(strategy=s, random_state=42)
+        dclf.fit(x_train, y_train)
+        score = dclf.score(x_test, y_test)
+        test_scores[s] = np.round(score, 2)
+    return test_scores
 
 seed = 42
 model_type = "gat"
@@ -41,7 +78,7 @@ xyz_status = True
 concrete = True
 n_mask = 10
 lr = 0.05
-n_epochs = 20
+n_epochs = 1000
 model_name = "conc_" + str(concrete) + "_nmask_" + str(n_mask) + "_lr_" + str(lr) + "_epochs_" + str(n_epochs) + "_in_" + str(input_dim) + "_h_" + str(hidden_dim) + "_nlabels_" + str(n_labels) + "_layers_" + str(local_layers)+ "_dp_" + str(dropout) + "_hd_" + str(heads) + "_preln_" + str(pre_linear) + "_res_" + str(res)+ "_ln_" + str(ln) + "_bn_" + str(bn)+ "_jk_" + str(jk)+ "_xres_" + str(x_res) + "_gnn_" + str(gnn) + "_halfhop_" + str(halfhop) + "_xyz_" + str(xyz_status)
 # paths
 paths = get_paths()
@@ -65,6 +102,27 @@ trainer = L.Trainer(limit_train_batches=1000, limit_val_batches=100, max_epochs=
 trainer.fit(model=model, datamodule=datamodule)
 
 if concrete:
-    gene_dir = log_path + "/selected_genes.txt"
-    with open(gene_dir, "w") as f:
-        f.write(str(model.model.concrete_argmax()))
+
+    genes = model.model.concrete_argmax()
+    # predict superclass with genes
+    x = datamodule.dataset.x[:, genes]
+    y = datamodule.dataset.labels
+    
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    train_idx, test_idx = next(
+        skf.split(np.arange(x.shape[0]), y)
+    )
+    linear_acc_train, linear_acc_test = linear_predict(x, y, train_idx, test_idx)
+    rand_scores = rand_predict(x, y, train_idx, test_idx)
+    rand_scores = str(rand_scores)
+    write_dir = log_path + "/summary.txt"
+    with open(write_dir, "w") as f:
+        f.write(f"Linear accuracy train: {linear_acc_train}\n")
+        f.write(f"Linear accuracy test: {linear_acc_test}\n")
+        f.write(f"Dummy accuracy: {rand_scores}\n")
+        f.write(f"Genes: {str(genes)}\n")
+
+    gene_dir = log_path + "/selected_genes.pt"
+    torch.save(model.model.concrete_argmax(), gene_dir)
+
+
