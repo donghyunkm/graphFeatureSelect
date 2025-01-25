@@ -6,11 +6,11 @@ import torch.nn as nn
     
 class MPNNs(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels, local_layers=2, 
-                 dropout=0.5, heads=8, pre_linear=True, res=True, ln=True, bn=False, jk=True, x_res=True, gnn='gcn', xyz_status=True):
+                 dropout=0.5, heads=8, pre_linear=True, res=True, ln=True, bn=False, jk=True, x_res=True, gnn='gcn', xyz_status=True, selected_genes=[]):
         super(MPNNs, self).__init__()
 
         self.dropout = dropout
-
+        self.selected_genes = selected_genes
         self.pre_linear = pre_linear
         self.res = res
         self.ln = ln
@@ -74,7 +74,10 @@ class MPNNs(torch.nn.Module):
         self.res_lin.reset_parameters()
         self.xyz_lin.reset_parameters()
     def forward(self, x, edge_index, xyz):
-
+        mask = torch.zeros(x.shape[1], device=x.device)
+        if len(self.selected_genes) > 0:
+            mask[self.selected_genes] = 1
+            x = x * mask
         if self.x_res:
             x_to_add = self.res_lin(x)
         if self.xyz_status:

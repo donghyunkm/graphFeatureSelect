@@ -16,7 +16,7 @@ from torch_geometric.transforms import RandomNodeSplit, NodePropertySplit
 
 
 class AnnDataGraphDataModule(L.LightningDataModule):
-    def __init__(self, data_dir: None, file_names: list[str] = ["VISp_nhood.h5ad"], batch_size: int = 1, n_hops: int = 2):
+    def __init__(self, data_dir: None, file_names: list[str] = ["VISp_nhood.h5ad"], batch_size: int = 1, n_hops: int = 2, no_edges: bool = False):
         super().__init__()
         if data_dir is None:
             data_dir = get_paths()["data_root"]
@@ -24,6 +24,7 @@ class AnnDataGraphDataModule(L.LightningDataModule):
         self.adata_paths = [str(data_dir) + file_name for file_name in file_names]
         self.batch_size = batch_size
         self.n_hops = n_hops
+        self.no_edges = no_edges
 
     def node_mask(self, method, data):
 
@@ -47,8 +48,11 @@ class AnnDataGraphDataModule(L.LightningDataModule):
 
     def setup(self, stage = None):
         dataset = AnnDataGraphDataset(self.adata_paths)
-
-        data = Data(x = dataset.x, edge_index = dataset.edge_index, labels = dataset.labels)
+        if self.no_edges:
+            self_edges = torch.tensor([[i, i] for i in range(dataset.x.shape[0])]).T
+            data = Data(x = dataset.x, edge_index = self_edges, labels = dataset.labels)
+        else:
+            data = Data(x = dataset.x, edge_index = dataset.edge_index, labels = dataset.labels)
         self.data = self.node_mask("rand", data)
         self.dataset = dataset
                     

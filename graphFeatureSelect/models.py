@@ -78,14 +78,15 @@ class MLP_2layer(torch.nn.Module):
 
 class GNN(L.LightningModule):
     def __init__(self, input_dim, hidden_dim, n_labels, lr, weight_mse=1.0, weight_ce=1.0, local_layers=2, 
-                        dropout=0.5, heads=1, pre_linear=True, res=True, ln=True, bn=False, jk=True, x_res=True, gnn='gat', halfhop=False, xyz_status=True):
+                        dropout=0.5, heads=1, pre_linear=True, res=True, ln=True, bn=False, jk=True, x_res=True, gnn='gat', halfhop=False, xyz_status=True, selected_genes=[]):
         super(GNN, self).__init__()
         self.lr = lr
         self.weight_mse = weight_mse
         self.weight_ce = weight_ce
         self.n_labels = n_labels
         self.halfhop = halfhop
-        self.model = MPNNs(input_dim, hidden_dim, n_labels, local_layers, dropout, heads, pre_linear, res, ln, bn, jk, x_res, gnn, xyz_status)
+        self.selected_genes = selected_genes
+        self.model = MPNNs(input_dim, hidden_dim, n_labels, local_layers, dropout, heads, pre_linear, res, ln, bn, jk, x_res, gnn, xyz_status, selected_genes)
         # losses
         self.loss_ce = nn.CrossEntropyLoss()
 
