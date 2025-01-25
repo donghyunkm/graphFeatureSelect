@@ -57,10 +57,10 @@ class AnnDataGraphDataModule(L.LightningDataModule):
         self.dataset = dataset
                     
     def train_dataloader(self):
-        return NeighborLoader(self.data, input_nodes=self.data.train_mask, num_neighbors=[-1]*self.n_hops, batch_size=self.batch_size, directed=False, shuffle=True, num_workers=16)
+        return NeighborLoader(self.data, input_nodes=self.data.train_mask, num_neighbors=[-1]*self.n_hops, batch_size=self.batch_size, shuffle=True, num_workers=16)
 
     def val_dataloader(self):
-        return NeighborLoader(self.data, input_nodes=self.data.val_mask, num_neighbors=[-1]*self.n_hops, batch_size=self.batch_size, directed=False, shuffle=False, num_workers=16)
+        return NeighborLoader(self.data, input_nodes=self.data.val_mask, num_neighbors=[-1]*self.n_hops, batch_size=self.batch_size, shuffle=False, num_workers=16)
 
     def test_dataloader(self):
-        return NeighborLoader(self.data, input_nodes=self.data.test_mask, num_neighbors=[-1]*self.n_hops, batch_size=self.batch_size, directed=False, shuffle=False, num_workers=16)
+        return NeighborLoader(self.data, input_nodes=self.data.test_mask, num_neighbors=[-1]*self.n_hops, batch_size=self.batch_size, shuffle=False, num_workers=16)
