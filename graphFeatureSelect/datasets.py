@@ -11,6 +11,7 @@ import scipy.sparse as sp
 import torch
 from graphFeatureSelect.utils import get_paths
 
+
 class AnnDataGraphDataset(Dataset):
     """
     Tabular AnnData dataset.
@@ -40,10 +41,8 @@ class AnnDataGraphDataset(Dataset):
         adata = ad.read_h5ad(self.paths[0])
         if len(self.paths) > 1:
             for i in range(1, len(self.paths)):
-                adata = ad.concat([adata, ad.read_h5ad(self.paths[i])], axis = 0, join='inner', merge = 'same')
-        assert (
-            "connectivities" in adata.obsp.keys()
-        ), "Spatial connectivities not found. Run `sc.pp.neighbors` first."
+                adata = ad.concat([adata, ad.read_h5ad(self.paths[i])], axis=0, join="inner", merge="same")
+        assert "connectivities" in adata.obsp.keys(), "Spatial connectivities not found. Run `sc.pp.neighbors` first."
         assert "distances" in adata.obsp.keys(), "Spatial distances not found. Run `sc.pp.neighbors` first."
 
         # filter genes
@@ -64,7 +63,9 @@ class AnnDataGraphDataset(Dataset):
         # create binary adjacency matrix without self-loops
         adj = self.adata.obsp["connectivities"].copy()
         adj = adj.astype(bool).astype(int)
-        adj[self.adata.obsp["distances"] > self.d_threshold] = 0 # the distances/connectivities are already thresholded by scanpy.pp.neighbors
+        adj[self.adata.obsp["distances"] > self.d_threshold] = (
+            0  # the distances/connectivities are already thresholded by scanpy.pp.neighbors
+        )
         adj.setdiag(0)
         self.adj = adj
 
@@ -75,17 +76,19 @@ class AnnDataGraphDataset(Dataset):
         self.cell_type_labelencoder.fit(self.cell_type_list)
         self.data_issparse = issparse(adata.X)
 
-        if self.data_issparse: 
+        if self.data_issparse:
             self.x = torch.tensor(adata.X.toarray()).float()
         else:
             self.x = torch.tensor(adata.X).float()
 
         self.edge_index = self.convert_torch_sparse_coo(adj)
 
-        self.labels = self.cell_type_labelencoder.transform(self.adata.obs.iloc[[i for i in range(self.adata.shape[0])]][self.cell_type])
-        self.xyz = torch.tensor(self.adata.obs[['x_section', 'y_section']].values).float()
+        self.labels = self.cell_type_labelencoder.transform(
+            self.adata.obs.iloc[[i for i in range(self.adata.shape[0])]][self.cell_type]
+        )
+        self.xyz = torch.tensor(self.adata.obs[["x_section", "y_section"]].values).float()
 
-        self.x = torch.cat((self.x, self.xyz), 1) # gene expr and xyz part of same row
+        self.x = torch.cat((self.x, self.xyz), 1)  # gene expr and xyz part of same row
 
     def convert_torch_sparse_coo(self, adj):
         csr = adj
@@ -110,7 +113,7 @@ class AnnDataGraphDataset(Dataset):
         idx = [idx]
         gene_exp = self.adata.X[idx, :].float()
         if self.data_issparse:
-            gene_exp = (gene_exp.toarray().astype(np.float32))
+            gene_exp = gene_exp.toarray().astype(np.float32)
         xyz = self.adata.obs.iloc[idx][self.spatial_coords].values.astype(np.float32)
         celltype = self.cell_type_labelencoder.transform(self.adata.obs.iloc[idx][self.cell_type])
         return gene_exp, celltype, xyz

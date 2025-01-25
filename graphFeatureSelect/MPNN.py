@@ -3,10 +3,26 @@ import torch.nn.functional as F
 from torch_geometric.nn import GATConv, GCNConv, SAGEConv
 import torch.nn as nn
 
-    
+
 class MPNNs(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels, out_channels, local_layers=2, 
-                 dropout=0.5, heads=8, pre_linear=True, res=True, ln=True, bn=False, jk=True, x_res=True, gnn='gcn', xyz_status=True, selected_genes=[]):
+    def __init__(
+        self,
+        in_channels,
+        hidden_channels,
+        out_channels,
+        local_layers=2,
+        dropout=0.5,
+        heads=8,
+        pre_linear=True,
+        res=True,
+        ln=True,
+        bn=False,
+        jk=True,
+        x_res=True,
+        gnn="gcn",
+        xyz_status=True,
+        selected_genes=[],
+    ):
         super(MPNNs, self).__init__()
 
         self.dropout = dropout
@@ -25,36 +41,38 @@ class MPNNs(torch.nn.Module):
         self.bns = torch.nn.ModuleList()
 
         self.lin_in = torch.nn.Linear(in_channels, hidden_channels)
-        
+
         if not self.pre_linear:
-            if gnn=='gat':
-                self.local_convs.append(GATConv(in_channels, hidden_channels, heads=heads,
-                    concat=False, add_self_loops=False, bias=False))
-            elif gnn=='sage':
+            if gnn == "gat":
+                self.local_convs.append(
+                    GATConv(in_channels, hidden_channels, heads=heads, concat=False, add_self_loops=False, bias=False)
+                )
+            elif gnn == "sage":
                 self.local_convs.append(SAGEConv(in_channels, hidden_channels))
             else:
-                self.local_convs.append(GCNConv(in_channels, hidden_channels,
-                        cached=False, normalize=True))
+                self.local_convs.append(GCNConv(in_channels, hidden_channels, cached=False, normalize=True))
             self.lins.append(torch.nn.Linear(in_channels, hidden_channels))
             self.lns.append(torch.nn.LayerNorm(hidden_channels))
             self.bns.append(torch.nn.BatchNorm1d(hidden_channels))
             local_layers = local_layers - 1
-            
+
         for _ in range(local_layers):
-            if gnn=='gat':
-                self.local_convs.append(GATConv(hidden_channels, hidden_channels, heads=heads,
-                    concat=False, add_self_loops=False, bias=False))
-            elif gnn=='sage':
+            if gnn == "gat":
+                self.local_convs.append(
+                    GATConv(
+                        hidden_channels, hidden_channels, heads=heads, concat=False, add_self_loops=False, bias=False
+                    )
+                )
+            elif gnn == "sage":
                 self.local_convs.append(SAGEConv(hidden_channels, hidden_channels))
             else:
-                self.local_convs.append(GCNConv(hidden_channels, hidden_channels,
-                        cached=False, normalize=True))
+                self.local_convs.append(GCNConv(hidden_channels, hidden_channels, cached=False, normalize=True))
             self.lins.append(torch.nn.Linear(hidden_channels, hidden_channels))
             self.lns.append(torch.nn.LayerNorm(hidden_channels))
             self.bns.append(torch.nn.BatchNorm1d(hidden_channels))
-                
+
         self.pred_local = torch.nn.Linear(hidden_channels, out_channels)
-        
+
         if self.x_res:
             self.res_lin = torch.nn.Linear(in_channels, out_channels)
         if self.xyz_status:
@@ -73,6 +91,7 @@ class MPNNs(torch.nn.Module):
         self.pred_local.reset_parameters()
         self.res_lin.reset_parameters()
         self.xyz_lin.reset_parameters()
+
     def forward(self, x, edge_index, xyz):
         mask = torch.zeros(x.shape[1], device=x.device)
         if len(self.selected_genes) > 0:
@@ -86,9 +105,9 @@ class MPNNs(torch.nn.Module):
         if self.pre_linear:
             x = self.lin_in(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
-        
+
         x_final = 0
-        
+
         for i, local_conv in enumerate(self.local_convs):
             if self.res:
                 x = local_conv(x, edge_index) + self.lins[i](x)

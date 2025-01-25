@@ -5,6 +5,7 @@ import anndata as ad
 import numpy as np
 import toml
 
+
 def get_datetime(expname: str = ""):
     datetime_str = datetime.now().strftime("%Y%m%d_%H%M%S")
     if expname is None:
@@ -12,6 +13,7 @@ def get_datetime(expname: str = ""):
     else:
         expname = f"{datetime_str}_{expname}"
     return expname
+
 
 def get_adata(path: str):
     adata = ad.read_h5ad(path)
@@ -44,4 +46,3 @@ def get_paths(verbose: bool = False) -> dict:
     if verbose:
         print(config)
     return config
-
