@@ -1,5 +1,5 @@
 [project]
-name = "graphFeatureSelect"
+name = "gfs"
 version = "0.0.1"
 description = "Selecting optimal gene sets with graph neural networks."
 readme = "README.md"
@@ -48,7 +48,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["graphFeatureSelect"]
+packages = ["gfs"]
 
 [tool.ruff]
 line-length = 120
@@ -66,8 +66,11 @@ select = [
 ]
 
 ignore = [
+    "N801",  # allow class names that ignore capwords convention
+    "N802",  # allow function names that are not all lowercase
     "N803",  # argument name should be lowercase; fine for matrices
     "N806",  # variable name should be lowercase; fine for matrices
+    "N816",  # allow capwords for function names
     "NPY002", # allow calls to np.random; could cause slightly different results
     "N812",
 ]
@@ -78,5 +81,5 @@ preview = true
 preview = true
 
 [tool.ruff.lint.isort]
-known-first-party = ["graphFeatureSelect"]
+known-first-party = ["gfs"]
 section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
