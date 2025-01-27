@@ -6,11 +6,10 @@ import numpy as np
 import torch
 from anndata._core.aligned_df import ImplicitModificationWarning
 from scipy.sparse import issparse
+from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import LabelEncoder
-from torch.utils.data import Dataset
 from torch_geometric.data import Data as PyGData
 from torch_geometric.loader.neighbor_loader import NeighborLoader
-from torch_geometric.transforms import NodePropertySplit, RandomNodeSplit
 
 from gfs.utils import get_paths
 
@@ -42,24 +41,11 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
         self.cell_type = cell_type
         self.spatial_coords = spatial_coords
 
-    def node_mask(self, data):
-        if self.split_method == "rand":
-            random_node_split = RandomNodeSplit(split="train_rest", num_val=0.2, num_test=0.1, key=None)
-            data = random_node_split(data)
-        else:
-            # unused here - utility in classification settings.
-            node_property_split = NodePropertySplit(
-                property_name="popularity", ratios=[0.6, 0.1, 0.1, 0.1, 0.1], ascending=True
-            )
-            data = node_property_split(data)
-
-        return data
-
     def setup(self, stage: str):
         # including self.dataset for debugging.
         # consider removing this if we run into cpu memory limits.
         self.dataset = PyGAnnData(self.adata_paths, cell_type=self.cell_type, spatial_coords=self.spatial_coords)
-        self.data = self.node_mask(self.dataset.get_pygdata_obj())
+        self.data = self.dataset.get_pygdata_obj()
 
     def train_dataloader(self):
         return NeighborLoader(
@@ -130,6 +116,7 @@ class PyGAnnData:
         cell_type="supertype",
         max_order=2,
         d_threshold=1000,
+        rand_seed=42,
     ):
         super().__init__()
         self.paths = paths
@@ -177,6 +164,14 @@ class PyGAnnData:
         self.cell_type_labelencoder.fit(self.cell_type_list)
         self.data_issparse = issparse(adata.X)
 
+        # reproducible train/val/test split for crossvalidation 5 folds using StratifiedKFold
+        self.cv = 0
+        skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=0)
+        splits = skf.split(self.adata, self.adata.obs[self.cell_type])
+        splits = list(splits)
+        self.train_ind = splits[self.cv][0]
+        self.val_ind = splits[self.cv][1]
+
     def convert_torch_sparse_coo(self, adj):
         coo_matrix = adj.tocoo()
         indices = np.vstack((coo_matrix.row, coo_matrix.col))
@@ -207,7 +202,22 @@ class PyGAnnData:
 
         xyz = torch.tensor(self.adata.obs[self.spatial_coords].values).float()
 
-        return PyGData(gene_exp=gene_exp, edge_index=edgelist, xyz=xyz, celltype=celltype, num_nodes=gene_exp.shape[0])
+        # boolean mask for train/val/test
+        # first, define all false
+        train_mask = torch.zeros(self.adata.shape[0], dtype=torch.bool)
+        train_mask[self.train_ind] = True
+        val_mask = torch.zeros(self.adata.shape[0], dtype=torch.bool)
+        val_mask[self.val_ind] = True
+
+        return PyGData(
+            gene_exp=gene_exp,
+            edge_index=edgelist,
+            xyz=xyz,
+            celltype=celltype,
+            num_nodes=gene_exp.shape[0],
+            train_mask=train_mask,
+            val_mask=val_mask,
+        )
 
 
 def test_pyganndatagraphdatamodule():
@@ -269,7 +279,7 @@ def test_pyganndata():
 
 
 if __name__ == "__main__":
-    print("running pyganndata")
-    test_pyganndata()
+    # print("running pyganndata")
+    # test_pyganndata()
     print("running pyganndata")
     test_pyganndatagraphdatamodule()
