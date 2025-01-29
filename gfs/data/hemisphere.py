@@ -88,6 +88,13 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
         )
 
 
+def read_check_h5ad(path):
+    adata = ad.read_h5ad(path)
+    for field in ["spatial_connectivities", "spatial_distances"]:
+        assert field in adata.obsp.keys(), f"{field} absent: Run `sc.pp.neighbors` first for {path}"
+    return adata
+
+
 def get_non_blank_genes(adata):
     keep_genes = adata.var[~adata.var.index.str.startswith("Blank")].index
     return keep_genes
@@ -120,12 +127,6 @@ class PyGAnnData:
     ):
         super().__init__()
         self.paths = paths
-
-        def read_check_h5ad(path):
-            adata = ad.read_h5ad(path)
-            for field in ["spatial_connectivities", "spatial_distances"]:
-                assert field in adata.obsp.keys(), f"{field} absent: Run `sc.pp.neighbors` first for {path}"
-            return adata
 
         adata = read_check_h5ad(self.paths[0])
         if len(self.paths) > 1:
@@ -279,7 +280,7 @@ def test_pyganndata():
 
 
 if __name__ == "__main__":
-    # print("running pyganndata")
-    # test_pyganndata()
+    print("running pyganndata")
+    test_pyganndata()
     print("running pyganndata")
     test_pyganndatagraphdatamodule()
