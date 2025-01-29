@@ -167,7 +167,7 @@ class PyGAnnData:
 
         # reproducible train/val/test split for crossvalidation 5 folds using StratifiedKFold
         self.cv = 0
-        skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=0)
+        skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=rand_seed)
         splits = skf.split(self.adata, self.adata.obs[self.cell_type])
         splits = list(splits)
         self.train_ind = splits[self.cv][0]
