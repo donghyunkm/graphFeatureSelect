@@ -148,7 +148,7 @@ class PyGAnnData:
             train_mask=train_mask,
             val_mask=val_mask,
             gene_exp_ind=gene_exp_ind,
-            xyz_ind=xyz_ind
+            xyz_ind=xyz_ind,
         )
 
 
@@ -163,9 +163,12 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
         file_names: list[str] = ["VISp_nhood.h5ad"],
         batch_size: int = 1,
         n_hops: int = 2,
-        split_method: str = "rand",
         cell_type: str = "subclass",
         spatial_coords: list[str] = ["x_section", "y_section", "z_section"],
+        d_threshold: float = 1000,
+        n_splits: int = 5,
+        cv: int = 0,
+        rand_seed: int = 42,
     ):
         super().__init__()
         if data_dir is None:
@@ -173,14 +176,25 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
         self.adata_paths = [str(data_dir) + file_name for file_name in file_names]
         self.batch_size = batch_size
         self.n_hops = n_hops
-        self.split_method = split_method
         self.cell_type = cell_type
         self.spatial_coords = spatial_coords
+        self.d_threshold = d_threshold
+        self.n_splits = n_splits
+        self.cv = cv
+        self.rand_seed = rand_seed
 
     def setup(self, stage: str):
         # including self.dataset for debugging.
         # consider removing this if we run into cpu memory limits.
-        self.dataset = PyGAnnData(self.adata_paths, cell_type=self.cell_type, spatial_coords=self.spatial_coords)
+        self.dataset = PyGAnnData(
+            self.adata_paths,
+            spatial_coords=self.spatial_coords,
+            cell_type=self.cell_type,
+            d_threshold=self.d_threshold,
+            n_splits=self.n_splits,
+            cv=self.cv,
+            rand_seed=self.rand_seed,
+        )
         self.data = self.dataset.get_pygdata_obj()
 
     def train_dataloader(self):
@@ -232,7 +246,16 @@ def test_pyganndatagraphdatamodule():
 
     path = get_paths()["data_root"]
     datamodule = PyGAnnDataGraphDataModule(
-        data_dir=path, file_names=["test_one_section_hemi.h5ad"], batch_size=1, n_hops=2
+        data_dir=path,
+        file_names=["test_one_section_hemi.h5ad"],
+        batch_size=1,
+        n_hops=2,
+        cell_type="subclass",
+        spatial_coords=["x_section", "y_section", "z_section"],
+        d_threshold=1000,
+        n_splits=5,
+        cv=0,
+        rand_seed=42,
     )
     datamodule.setup(stage="fit")
     dataloader = iter(datamodule.train_dataloader())
@@ -275,6 +298,9 @@ def test_pyganndata():
         spatial_coords=["x_ccf", "y_ccf", "z_ccf"],
         cell_type="supertype",
         d_threshold=1000,
+        n_splits=5,
+        cv=0,
+        rand_seed=42,
     )
     print("pyganndata checks passed")
 

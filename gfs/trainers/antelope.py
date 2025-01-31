@@ -5,11 +5,11 @@ from lightning.pytorch.loggers import TensorBoardLogger
 from omegaconf import DictConfig, OmegaConf
 
 from gfs.data.hemisphere import PyGAnnDataGraphDataModule
-from gfs.models.antelope import GnnFs
+from gfs.models.antelope import LitGnnFs
 from gfs.utils import get_datetime, get_paths
 
 
-@hydra.main(config_path="../configs", config_name="gnn")
+@hydra.main(config_path="../configs", config_name="antelope")
 def main(config: DictConfig):
     print(OmegaConf.to_yaml(config))
 
@@ -23,8 +23,8 @@ def main(config: DictConfig):
     tb_logger = TensorBoardLogger(save_dir=log_path)
     checkpoint_callback = ModelCheckpoint(
         dirpath=checkpoint_path,
-        monitor="val_overall_acc",
-        filename="{epoch}-{val_overall_acc:.2f}",
+        monitor="val_metric_overall_acc",
+        filename="{epoch}-{val_metric_overall_acc:.2f}",
         mode="max",
         save_top_k=1,
         every_n_epochs=1,
@@ -38,10 +38,14 @@ def main(config: DictConfig):
         spatial_coords=config.data.spatial_coords,
         batch_size=config.data.batch_size,
         n_hops=config.data.n_hops,
+        d_threshold=config.data.d_threshold,
+        n_splits=config.data.n_splits,
+        cv=config.data.cv,
+        rand_seed=config.data.rand_seed,
     )
 
     # model
-    model = GnnFs(config)
+    model = LitGnnFs(config)
 
     # fit wrapper
     trainer = L.Trainer(

@@ -12,29 +12,48 @@ class GnnFs(torch.nn.Module):
     This model features:
     1. a GNN backbone adapted from `Classic GNNs are strong baselines...` (Luo et al. 2024)
     2. a feature selection layer based on Concrete variables (Jang. et al. 2016)
+
+    Args:
+        gene_ch (int): number of input features
+        spatial_ch (int): number of spatial features
+        hid_ch (int): number of hidden features
+        out_ch (int): number of output features
+        n_select (int): number of features to select
+        local_layers (int): gnn depth
+        dropout (float): dropout rate
+        heads (int): number of heads
+        pre_linear (bool): if True, use pre-linear layer
+        res (bool): if True, use residual connections
+        ln (bool): if True, use layer normalization
+        bn (bool): if True, use batch normalization
+        jk (bool): if True, use skip connections
+        x_res (bool): if True, use x residual connections
+        gnn (str): "gat", "sage", or "gcn"
+        xyz_status (bool): if True, use xyz status
     """
 
     def __init__(
         self,
-        in_ch,
+        gene_ch,
+        spatial_ch,
         hid_ch,
         out_ch,
-        n_features,
-        local_layers=2,
-        dropout=0.5,
-        heads=8,
-        pre_linear=True,
-        res=True,
-        ln=True,
-        bn=False,
-        jk=True,
-        x_res=True,
-        gnn="gcn",
-        xyz_status=True,
+        n_select,
+        local_layers,
+        dropout,
+        heads,
+        pre_linear,
+        res,
+        ln,
+        bn,
+        jk,
+        x_res,
+        gnn,
+        xyz_status,
     ):
         super(GnnFs, self).__init__()
 
-        self.concrete = nn.Parameter(torch.randn(n_features, in_ch))
+        self.concrete = nn.Parameter(torch.randn(n_select, gene_ch))
         self.dropout = dropout
 
         self.pre_linear = pre_linear
@@ -49,18 +68,18 @@ class GnnFs(torch.nn.Module):
         self.lns = torch.nn.ModuleList()
         self.bns = torch.nn.ModuleList()
 
-        self.lin_in = torch.nn.Linear(in_ch, hid_ch)
+        self.lin_in = torch.nn.Linear(gene_ch, hid_ch)
 
         if not self.pre_linear:
             if gnn == "gat":
                 self.gnn_layers.append(
-                    GATConv(in_ch, hid_ch, heads=heads, concat=False, add_self_loops=False, bias=False)
+                    GATConv(gene_ch, hid_ch, heads=heads, concat=False, add_self_loops=False, bias=False)
                 )
             elif gnn == "sage":
-                self.gnn_layers.append(SAGEConv(in_ch, hid_ch))
+                self.gnn_layers.append(SAGEConv(gene_ch, hid_ch))
             else:
-                self.gnn_layers.append(GCNConv(in_ch, hid_ch, cached=False, normalize=True))
-            self.lins.append(torch.nn.Linear(in_ch, hid_ch))
+                self.gnn_layers.append(GCNConv(gene_ch, hid_ch, cached=False, normalize=True))
+            self.lins.append(torch.nn.Linear(gene_ch, hid_ch))
             self.lns.append(torch.nn.LayerNorm(hid_ch))
             self.bns.append(torch.nn.BatchNorm1d(hid_ch))
             local_layers = local_layers - 1
@@ -81,9 +100,9 @@ class GnnFs(torch.nn.Module):
         self.pred_local = torch.nn.Linear(hid_ch, out_ch)
 
         if self.x_res:
-            self.res_lin = torch.nn.Linear(in_ch, out_ch)
+            self.res_lin = torch.nn.Linear(gene_ch, out_ch)
         if self.xyz_status:
-            self.xyz_lin = torch.nn.Linear(2, out_ch)
+            self.xyz_lin = torch.nn.Linear(spatial_ch, out_ch)
 
     def reset_parameters(self):
         for layer in self.gnn_layers:
@@ -155,15 +174,16 @@ class LitGnnFs(L.LightningModule):
     def __init__(self, config):
         super(LitGnnFs, self).__init__()
 
-        self.hparams = config
+        self.save_hyperparameters(config)
 
         # model
-        cfg = self.hparams.models
+        cfg = self.hparams.model
         self.model = GnnFs(
-            in_ch=cfg.in_ch,
+            gene_ch=cfg.gene_ch,
+            spatial_ch=cfg.spatial_ch,
             hid_ch=cfg.hid_ch,
             out_ch=cfg.out_ch,
-            n_features=cfg.n_features,
+            n_select=cfg.n_select,
             local_layers=cfg.local_layers,
             dropout=cfg.dropout,
             heads=cfg.heads,
@@ -188,33 +208,33 @@ class LitGnnFs(L.LightningModule):
         self.loss_ce = nn.CrossEntropyLoss()
 
         # metrics
-        options = {"num_classes": self.n_labels, "top_k": 1, "multidim_average": "global"}
+        options = {"num_classes": cfg.out_ch, "top_k": 1, "multidim_average": "global"}
         self.metric_overall_acc = MulticlassAccuracy(average="weighted", **options)
         self.metric_macro_acc = MulticlassAccuracy(average="macro", **options)
         self.metric_multiclass_acc = MulticlassAccuracy(average=None, **options)
 
-    def forward(self, x, edge_index, xyz, temp, hard_):
+    def forward(self, gene_exp, edge_index, xyz, temp, hard_):
         """
         Args:
-            x (torch.Tensor): (n_nodes, n_genes)
+            gene_exp (torch.Tensor): (n_nodes, n_genes)
             edge_index (torch.Tensor): (2, n_edges)
             xyz (torch.Tensor): (n_nodes, 3)
             temp (float): temperature for Gumbel-Softmax
             hard_ (bool): if True, use hard Gumbel-Softmax
         """
 
-        celltype = self.model(x, edge_index, xyz, temp, hard_)
+        celltype = self.model(gene_exp, edge_index, xyz, temp, hard_)
         return celltype
 
     def training_step(self, batch, batch_idx):
         # calculate losses and metrics for all nodes in the batch.
-        batch_size = batch.gene_exp.size(0)
+        batch_size = batch.x.size(0)
 
         # halfhop or pass-through
-        data = self.transform(data)
+        data = self.transform(batch)
 
         celltype_pred = self.forward(
-            x=data.x[:, data.gene_exp_ind],
+            gene_exp=data.x[:, data.gene_exp_ind],
             edge_index=data.edge_index,
             xyz=data.x[:, data.xyz_ind],
             temp=exp_decay_temp_schedule(self.current_epoch, self.trainer.max_epochs),
@@ -226,9 +246,9 @@ class LitGnnFs(L.LightningModule):
             celltype_pred = celltype_pred[~data.slow_node_mask]
 
         # calculate losses and metrics
-        train_loss_ce = self.loss_ce(celltype_pred, data.celltype.squeeze())
-        train_metric_overall_acc = self.metric_overall_acc(preds=celltype_pred, target=data.celltype.squeeze())
-        train_metric_macro_acc = self.metric_macro_acc(preds=celltype_pred, target=data.celltype.squeeze())
+        train_loss_ce = self.loss_ce(celltype_pred, data.celltype)
+        train_metric_overall_acc = self.metric_overall_acc(preds=celltype_pred, target=data.celltype)
+        train_metric_macro_acc = self.metric_macro_acc(preds=celltype_pred, target=data.celltype)
 
         # log losses and metrics
         options = {
@@ -251,13 +271,15 @@ class LitGnnFs(L.LightningModule):
     def validation_step(self, batch, batch_idx):
         # calculate losses and metrics for all nodes in the batch.
         # TODO: use input nodes to alter batch size
-        batch_size = batch.gene_exp.size(0)
+
+        batch_size = batch.input_id.size(0)
+        idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0]
 
         # halfhop or pass-through
-        data = self.transform(data)
+        data = self.transform(batch)
 
         celltype_pred = self.forward(
-            x=data.x[:, data.gene_exp_ind],
+            gene_exp=data.x[:, data.gene_exp_ind],
             edge_index=data.edge_index,
             xyz=data.x[:, data.xyz_ind],
             temp=exp_decay_temp_schedule(self.current_epoch, self.trainer.max_epochs),
@@ -269,9 +291,9 @@ class LitGnnFs(L.LightningModule):
             celltype_pred = celltype_pred[~data.slow_node_mask]
 
         # calculate losses and metrics
-        val_loss_ce = self.loss_ce(celltype_pred, data.celltype.squeeze())
-        val_metric_overall_acc = self.metric_overall_acc(preds=celltype_pred, target=data.celltype.squeeze())
-        val_metric_macro_acc = self.metric_macro_acc(preds=celltype_pred, target=data.celltype.squeeze())
+        val_loss_ce = self.loss_ce(celltype_pred[idx], batch.celltype[idx])
+        val_metric_overall_acc = self.metric_overall_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
+        val_metric_macro_acc = self.metric_macro_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
 
         # log losses and metrics
         options = {
