@@ -1,0 +1,301 @@
+import lightning as L
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch_geometric.transforms as T
+from torch_geometric.nn import GATConv, GCNConv, SAGEConv
+from torchmetrics.classification import MulticlassAccuracy
+
+
+class GnnFs(torch.nn.Module):
+    """
+    This model features:
+    1. a GNN backbone adapted from `Classic GNNs are strong baselines...` (Luo et al. 2024)
+    2. a feature selection layer based on Concrete variables (Jang. et al. 2016)
+    """
+
+    def __init__(
+        self,
+        in_ch,
+        hid_ch,
+        out_ch,
+        n_features,
+        local_layers=2,
+        dropout=0.5,
+        heads=8,
+        pre_linear=True,
+        res=True,
+        ln=True,
+        bn=False,
+        jk=True,
+        x_res=True,
+        gnn="gcn",
+        xyz_status=True,
+    ):
+        super(GnnFs, self).__init__()
+
+        self.concrete = nn.Parameter(torch.randn(n_features, in_ch))
+        self.dropout = dropout
+
+        self.pre_linear = pre_linear
+        self.res = res
+        self.ln = ln
+        self.bn = bn
+        self.jk = jk
+        self.x_res = x_res
+        self.xyz_status = xyz_status
+        self.gnn_layers = torch.nn.ModuleList()
+        self.lins = torch.nn.ModuleList()
+        self.lns = torch.nn.ModuleList()
+        self.bns = torch.nn.ModuleList()
+
+        self.lin_in = torch.nn.Linear(in_ch, hid_ch)
+
+        if not self.pre_linear:
+            if gnn == "gat":
+                self.gnn_layers.append(
+                    GATConv(in_ch, hid_ch, heads=heads, concat=False, add_self_loops=False, bias=False)
+                )
+            elif gnn == "sage":
+                self.gnn_layers.append(SAGEConv(in_ch, hid_ch))
+            else:
+                self.gnn_layers.append(GCNConv(in_ch, hid_ch, cached=False, normalize=True))
+            self.lins.append(torch.nn.Linear(in_ch, hid_ch))
+            self.lns.append(torch.nn.LayerNorm(hid_ch))
+            self.bns.append(torch.nn.BatchNorm1d(hid_ch))
+            local_layers = local_layers - 1
+
+        for _ in range(local_layers):
+            if gnn == "gat":
+                self.gnn_layers.append(
+                    GATConv(hid_ch, hid_ch, heads=heads, concat=False, add_self_loops=False, bias=False)
+                )
+            elif gnn == "sage":
+                self.gnn_layers.append(SAGEConv(hid_ch, hid_ch))
+            else:
+                self.gnn_layers.append(GCNConv(hid_ch, hid_ch, cached=False, normalize=True))
+            self.lins.append(torch.nn.Linear(hid_ch, hid_ch))
+            self.lns.append(torch.nn.LayerNorm(hid_ch))
+            self.bns.append(torch.nn.BatchNorm1d(hid_ch))
+
+        self.pred_local = torch.nn.Linear(hid_ch, out_ch)
+
+        if self.x_res:
+            self.res_lin = torch.nn.Linear(in_ch, out_ch)
+        if self.xyz_status:
+            self.xyz_lin = torch.nn.Linear(2, out_ch)
+
+    def reset_parameters(self):
+        for layer in self.gnn_layers:
+            layer.reset_parameters()
+        for lin in self.lins:
+            lin.reset_parameters()
+        for ln in self.lns:
+            ln.reset_parameters()
+        for bn in self.bns:
+            bn.reset_parameters()
+        self.lin_in.reset_parameters()
+        self.pred_local.reset_parameters()
+        self.res_lin.reset_parameters()
+        self.xyz_lin.reset_parameters()
+        self.concrete.reset_parameters()
+
+    def forward(self, x, edge_index, xyz, temp, hard_):
+        # TODO:  why clamp? Isn't gumbel_softmax already providing a well-behaved mask?
+        mask = F.gumbel_softmax(self.concrete, tau=temp, hard=hard_)
+        mask = torch.sum(mask, axis=0)
+        mask = torch.clamp(mask, min=0, max=1)
+        x = mask * x
+
+        if self.x_res:
+            x_to_add = self.res_lin(x)
+        if self.xyz_status:
+            xyz = self.xyz_lin(xyz)
+
+        if self.pre_linear:
+            x = self.lin_in(x)
+            x = F.dropout(x, p=self.dropout, training=self.training)
+
+        x_final = 0
+
+        for i, layer in enumerate(self.gnn_layers):
+            if self.res:
+                x = layer(x, edge_index) + self.lins[i](x)
+            else:
+                x = layer(x, edge_index)
+            if self.ln:
+                x = self.lns[i](x)
+            elif self.bn:
+                x = self.bns[i](x)
+            x = F.relu(x)
+            x = F.dropout(x, p=self.dropout, training=self.training)
+            if self.jk:
+                x_final = x_final + x
+            else:
+                x_final = x
+
+        x = self.pred_local(x_final)
+
+        if self.x_res:
+            x = x + x_to_add
+
+        if self.xyz_status:
+            x = x + xyz
+
+        # TODO: what is the role of xyz_status?
+        return x
+
+    def concrete_argmax(self):
+        # TODO: why softmax? or argmax?
+        # return F.softmax(self.concrete, dim=1)
+        return torch.argmax(self.concrete, dim=1)
+
+
+class LitGnnFs(L.LightningModule):
+    def __init__(self, config):
+        super(LitGnnFs, self).__init__()
+
+        self.hparams = config
+
+        # model
+        cfg = self.hparams.models
+        self.model = GnnFs(
+            in_ch=cfg.in_ch,
+            hid_ch=cfg.hid_ch,
+            out_ch=cfg.out_ch,
+            n_features=cfg.n_features,
+            local_layers=cfg.local_layers,
+            dropout=cfg.dropout,
+            heads=cfg.heads,
+            pre_linear=cfg.pre_linear,
+            res=cfg.res,
+            ln=cfg.ln,
+            bn=cfg.bn,
+            jk=cfg.jk,
+            x_res=cfg.x_res,
+            gnn=cfg.gnn,
+            xyz_status=cfg.xyz_status,
+        )
+
+        # related to training step
+        self.halfhop = cfg.halfhop
+        if self.halfhop:
+            self.transform = T.HalfHop(alpha=0.5)
+        else:
+            self.transform = lambda x: x
+
+        # losses
+        self.loss_ce = nn.CrossEntropyLoss()
+
+        # metrics
+        options = {"num_classes": self.n_labels, "top_k": 1, "multidim_average": "global"}
+        self.metric_overall_acc = MulticlassAccuracy(average="weighted", **options)
+        self.metric_macro_acc = MulticlassAccuracy(average="macro", **options)
+        self.metric_multiclass_acc = MulticlassAccuracy(average=None, **options)
+
+    def forward(self, x, edge_index, xyz, temp, hard_):
+        """
+        Args:
+            x (torch.Tensor): (n_nodes, n_genes)
+            edge_index (torch.Tensor): (2, n_edges)
+            xyz (torch.Tensor): (n_nodes, 3)
+            temp (float): temperature for Gumbel-Softmax
+            hard_ (bool): if True, use hard Gumbel-Softmax
+        """
+
+        celltype = self.model(x, edge_index, xyz, temp, hard_)
+        return celltype
+
+    def training_step(self, batch, batch_idx):
+        # calculate losses and metrics for all nodes in the batch.
+        batch_size = batch.gene_exp.size(0)
+
+        # halfhop or pass-through
+        data = self.transform(data)
+
+        celltype_pred = self.forward(
+            x=data.x[:, data.gene_exp_ind],
+            edge_index=data.edge_index,
+            xyz=data.x[:, data.xyz_ind],
+            temp=exp_decay_temp_schedule(self.current_epoch, self.trainer.max_epochs),
+            hard_=False,
+        )
+
+        # conditionally remove "slow nodes" (from halfhop)
+        if hasattr(data, "slow_node_mask"):
+            celltype_pred = celltype_pred[~data.slow_node_mask]
+
+        # calculate losses and metrics
+        train_loss_ce = self.loss_ce(celltype_pred, data.celltype.squeeze())
+        train_metric_overall_acc = self.metric_overall_acc(preds=celltype_pred, target=data.celltype.squeeze())
+        train_metric_macro_acc = self.metric_macro_acc(preds=celltype_pred, target=data.celltype.squeeze())
+
+        # log losses and metrics
+        options = {
+            "on_step": self.hparams.logging.on_step,
+            "on_epoch": self.hparams.logging.on_epoch,
+            "prog_bar": self.hparams.logging.prog_bar,
+            "logger": self.hparams.logging.logger,
+            "batch_size": batch_size,
+        }
+
+        self.log("train_loss_ce", train_loss_ce, **options)
+        self.log("train_metric_overall_acc", train_metric_overall_acc, **options)
+        self.log("train_metric_macro_acc", train_metric_macro_acc, **options)
+
+        return train_loss_ce
+
+    def on_train_epoch_end(self):
+        pass
+
+    def validation_step(self, batch, batch_idx):
+        # calculate losses and metrics for all nodes in the batch.
+        # TODO: use input nodes to alter batch size
+        batch_size = batch.gene_exp.size(0)
+
+        # halfhop or pass-through
+        data = self.transform(data)
+
+        celltype_pred = self.forward(
+            x=data.x[:, data.gene_exp_ind],
+            edge_index=data.edge_index,
+            xyz=data.x[:, data.xyz_ind],
+            temp=exp_decay_temp_schedule(self.current_epoch, self.trainer.max_epochs),
+            hard_=False,
+        )
+
+        # conditionally remove "slow nodes" (from halfhop)
+        if hasattr(data, "slow_node_mask"):
+            celltype_pred = celltype_pred[~data.slow_node_mask]
+
+        # calculate losses and metrics
+        val_loss_ce = self.loss_ce(celltype_pred, data.celltype.squeeze())
+        val_metric_overall_acc = self.metric_overall_acc(preds=celltype_pred, target=data.celltype.squeeze())
+        val_metric_macro_acc = self.metric_macro_acc(preds=celltype_pred, target=data.celltype.squeeze())
+
+        # log losses and metrics
+        options = {
+            "on_step": self.hparams.logging.on_step,
+            "on_epoch": self.hparams.logging.on_epoch,
+            "prog_bar": self.hparams.logging.prog_bar,
+            "logger": self.hparams.logging.logger,
+            "batch_size": batch_size,
+        }
+
+        self.log("val_loss_ce", val_loss_ce, **options)
+        self.log("val_metric_overall_acc", val_metric_overall_acc, **options)
+        self.log("val_metric_macro_acc", val_metric_macro_acc, **options)
+
+    def on_validation_epoch_end(self):
+        pass
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.trainer.lr)
+        return optimizer
+
+
+def exp_decay_temp_schedule(epoch, total_epoch):
+    start_temp = 10
+    end_temp = 0.01
+    temp = start_temp * (end_temp / start_temp) ** (epoch / total_epoch)
+    return temp
