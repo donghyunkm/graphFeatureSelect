@@ -1,18 +1,12 @@
 # combines functionality from dataloaders.py and dataprocessors.py from nichecompass
-
-from pathlib import Path
-
-import anndata as ad
 import lightning as L
 import torch
-from torch.utils.data import ConcatDataset, DataLoader, random_split, Subset
-from torch_geometric.loader.neighbor_loader import NeighborLoader
-from sklearn.model_selection import train_test_split
 from torch_geometric.data import Data
+from torch_geometric.loader.neighbor_loader import NeighborLoader
+from torch_geometric.transforms import NodePropertySplit, RandomNodeSplit
 
-from graphFeatureSelect.utils import get_paths
-from graphFeatureSelect.datasets import AnnDataGraphDataset
-from torch_geometric.transforms import RandomNodeSplit, NodePropertySplit
+from gfs.datasets import AnnDataGraphDataset
+from gfs.utils import get_paths
 
 
 class AnnDataGraphDataModule(L.LightningDataModule):

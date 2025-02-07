@@ -2,14 +2,14 @@
 import warnings
 
 import anndata as ad
-from anndata._core.aligned_df import ImplicitModificationWarning
-from scipy.sparse import issparse
-from sklearn.preprocessing import LabelEncoder
-from torch.utils.data import Dataset
 import numpy as np
 import scipy.sparse as sp
 import torch
+from anndata._core.aligned_df import ImplicitModificationWarning
 from graphFeatureSelect.utils import get_paths
+from scipy.sparse import issparse
+from sklearn.preprocessing import LabelEncoder
+from torch.utils.data import Dataset
 
 
 class AnnDataGraphDataset(Dataset):

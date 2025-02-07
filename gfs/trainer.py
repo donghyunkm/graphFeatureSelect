@@ -224,7 +224,7 @@ if model_type == "concrete" or model_type == "persist":
         f.write(f"Linear accuracy train: {linear_acc_train}\n")
         f.write(f"Linear accuracy test: {linear_acc_test}\n")
         f.write(f"Dummy accuracy: {rand_scores}\n")
-        f.write(f"Genes: {str(genes)}\n")
+        f.write(f"Genes: {genes!s}\n")
 
     gene_dir = log_path + "/selected_genes.pt"
     torch.save(model.model.concrete_argmax(), gene_dir)

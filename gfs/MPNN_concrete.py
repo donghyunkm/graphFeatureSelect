@@ -1,13 +1,16 @@
-# Architecture is adapted from Luo et al. 2024 (Classic GNNs are strong baselines)
-# Added a concrete layer
+# GNN architecture is adapted from Luo et al. 2024 (Classic GNNs are strong baselines)
+# Added a feature selection layer based on Concrete variables (a.k.a. Gumbel Softmax)
 
+import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GATConv, GCNConv, SAGEConv
 
+from gfs.models.antelope import GnnFs
 
-class MPNN_conc(torch.nn.Module):  # noqa: N801
+
+class LitGnnFs(pl.LightningModule):
     def __init__(
         self,
         in_channels,
@@ -26,7 +29,8 @@ class MPNN_conc(torch.nn.Module):  # noqa: N801
         gnn="gcn",
         xyz_status=True,
     ):
-        super(MPNN_conc, self).__init__()
+        super(LitGnnFs, self).__init__()
+        self.model = GnnFs(config)
 
         self.concrete = nn.Parameter(torch.randn(n_mask, in_channels))
         self.dropout = dropout
@@ -38,7 +42,6 @@ class MPNN_conc(torch.nn.Module):  # noqa: N801
         self.jk = jk
         self.x_res = x_res
         self.xyz_status = xyz_status
-        self.h_lins = torch.nn.ModuleList()
         self.local_convs = torch.nn.ModuleList()
         self.lins = torch.nn.ModuleList()
         self.lns = torch.nn.ModuleList()
@@ -123,8 +126,6 @@ class MPNN_conc(torch.nn.Module):  # noqa: N801
                 x = self.lns[i](x)
             elif self.bn:
                 x = self.bns[i](x)
-            else:
-                pass
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
             if self.jk:

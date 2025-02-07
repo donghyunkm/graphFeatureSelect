@@ -1,7 +1,7 @@
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GATConv, GCNConv, SAGEConv
-import torch.nn as nn
 
 
 class MPNNs(torch.nn.Module):
@@ -117,8 +117,6 @@ class MPNNs(torch.nn.Module):
                 x = self.lns[i](x)
             elif self.bn:
                 x = self.bns[i](x)
-            else:
-                pass
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
             if self.jk:
