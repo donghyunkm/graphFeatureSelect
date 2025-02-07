@@ -1,7 +1,7 @@
 import hydra
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint
-from lightning.pytorch.loggers import TensorBoardLogger
+from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
 from omegaconf import DictConfig, OmegaConf
 
 from gfs.data.hemisphere import PyGAnnDataGraphDataModule
@@ -9,7 +9,7 @@ from gfs.models.antelope import LitGnnFs
 from gfs.utils import get_datetime, get_paths
 
 
-@hydra.main(config_path="../configs", config_name="antelope")
+@hydra.main(config_path="../configs", config_name="antelope", version_base="1.2")
 def main(config: DictConfig):
     print(OmegaConf.to_yaml(config))
 

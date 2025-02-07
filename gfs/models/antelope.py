@@ -1,3 +1,6 @@
+import csv
+import os
+
 import lightning as L
 import torch
 import torch.nn as nn
@@ -11,7 +14,7 @@ class GnnFs(torch.nn.Module):
     """
     This model features:
     1. a GNN backbone adapted from `Classic GNNs are strong baselines...` (Luo et al. 2024)
-    2. a feature selection layer based on Concrete variables (Jang. et al. 2016)
+    2. a feature selection layer based on concrete variables (Jang. et al. 2016)
 
     Args:
         gene_ch (int): number of input features
@@ -53,7 +56,7 @@ class GnnFs(torch.nn.Module):
     ):
         super(GnnFs, self).__init__()
 
-        self.concrete = nn.Parameter(torch.randn(n_select, gene_ch))
+        self.logits = nn.Parameter(torch.randn(n_select, gene_ch))
         self.dropout = dropout
 
         self.pre_linear = pre_linear
@@ -117,13 +120,30 @@ class GnnFs(torch.nn.Module):
         self.pred_local.reset_parameters()
         self.res_lin.reset_parameters()
         self.xyz_lin.reset_parameters()
-        self.concrete.reset_parameters()
+        self.logits.reset_parameters()
 
-    def forward(self, x, edge_index, xyz, temp, hard_):
-        # TODO:  why clamp? Isn't gumbel_softmax already providing a well-behaved mask?
-        mask = F.gumbel_softmax(self.concrete, tau=temp, hard=hard_)
-        mask = torch.sum(mask, axis=0)
-        mask = torch.clamp(mask, min=0, max=1)
+    def get_mask(self, tau, hard_):
+        """
+        Get soft k-hot mask
+        """
+        sample = F.gumbel_softmax(self.logits, tau=tau, hard=hard_)
+        k_hot = torch.max(sample, dim=0).values
+        return k_hot
+
+    def get_mask_indices(self):
+        """
+        Get indices of highest probability features.
+        """
+        probs = F.softmax(self.logits, dim=1)
+        mask_indices = torch.argmax(probs, dim=1)
+        mask_probs = torch.gather(probs, dim=1, index=mask_indices.unsqueeze(1))
+        return mask_indices, mask_probs.squeeze()
+
+    def forward(self, x, edge_index, xyz, tau, hard_):
+        # TODO: to match persist, we should generate as many k-hot masks as entries in the batch.
+        # This means generate a mask, and duplicate it for neighbors of each node.
+        # TODO: currently, we generate a single mask for the entire batch, which is likely inefficient.
+        mask = self.get_mask(tau, hard_)
         x = mask * x
 
         if self.x_res:
@@ -158,16 +178,11 @@ class GnnFs(torch.nn.Module):
         if self.x_res:
             x = x + x_to_add
 
+        # TODO: why add here?
         if self.xyz_status:
             x = x + xyz
 
-        # TODO: what is the role of xyz_status?
         return x
-
-    def concrete_argmax(self):
-        # TODO: why softmax? or argmax?
-        # return F.softmax(self.concrete, dim=1)
-        return torch.argmax(self.concrete, dim=1)
 
 
 class LitGnnFs(L.LightningModule):
@@ -213,17 +228,17 @@ class LitGnnFs(L.LightningModule):
         self.metric_macro_acc = MulticlassAccuracy(average="macro", **options)
         self.metric_multiclass_acc = MulticlassAccuracy(average=None, **options)
 
-    def forward(self, gene_exp, edge_index, xyz, temp, hard_):
+    def forward(self, gene_exp, edge_index, xyz, tau, hard_):
         """
         Args:
             gene_exp (torch.Tensor): (n_nodes, n_genes)
             edge_index (torch.Tensor): (2, n_edges)
             xyz (torch.Tensor): (n_nodes, 3)
-            temp (float): temperature for Gumbel-Softmax
+            tau (float): temperature for Gumbel-Softmax
             hard_ (bool): if True, use hard Gumbel-Softmax
         """
 
-        celltype = self.model(gene_exp, edge_index, xyz, temp, hard_)
+        celltype = self.model(gene_exp, edge_index, xyz, tau, hard_)
         return celltype
 
     def training_step(self, batch, batch_idx):
@@ -237,7 +252,7 @@ class LitGnnFs(L.LightningModule):
             gene_exp=data.x[:, data.gene_exp_ind],
             edge_index=data.edge_index,
             xyz=data.x[:, data.xyz_ind],
-            temp=exp_decay_temp_schedule(self.current_epoch, self.trainer.max_epochs),
+            tau=exp_decay_tau_schedule(self.current_epoch, self.trainer.max_epochs),
             hard_=False,
         )
 
@@ -246,9 +261,13 @@ class LitGnnFs(L.LightningModule):
             celltype_pred = celltype_pred[~data.slow_node_mask]
 
         # calculate losses and metrics
-        train_loss_ce = self.loss_ce(celltype_pred, data.celltype)
-        train_metric_overall_acc = self.metric_overall_acc(preds=celltype_pred, target=data.celltype)
-        train_metric_macro_acc = self.metric_macro_acc(preds=celltype_pred, target=data.celltype)
+        train_loss_ce = self.loss_ce(celltype_pred[data.train_mask], data.celltype[data.train_mask])
+        train_metric_overall_acc = self.metric_overall_acc(
+            preds=celltype_pred[data.train_mask], target=data.celltype[data.train_mask]
+        )
+        train_metric_macro_acc = self.metric_macro_acc(
+            preds=celltype_pred[data.train_mask], target=data.celltype[data.train_mask]
+        )
 
         # log losses and metrics
         options = {
@@ -262,15 +281,31 @@ class LitGnnFs(L.LightningModule):
         self.log("train_loss_ce", train_loss_ce, **options)
         self.log("train_metric_overall_acc", train_metric_overall_acc, **options)
         self.log("train_metric_macro_acc", train_metric_macro_acc, **options)
-
         return train_loss_ce
 
     def on_train_epoch_end(self):
-        pass
+        # log gene selections and probabilities at the end of each epoch
+        mask_indices, mask_probs = self.model.get_mask_indices()
+        metrics = {"epoch": self.current_epoch}
+
+        for i in range(mask_indices.size(0)):
+            metrics[f"sel_{i}"] = mask_indices[i].item()
+
+        for i in range(mask_indices.size(0)):
+            metrics[f"prob_{i}"] = mask_probs[i].item()
+
+        # get filepath of logger
+        path = self.logger._root_dir + "/selections.csv"
+        file_exists = os.path.isfile(path)
+        with open(path, "a", newline="") as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(metrics.keys())
+            writer.writerow([v for v in metrics.values()])
+        return
 
     def validation_step(self, batch, batch_idx):
         # calculate losses and metrics for all nodes in the batch.
-        # TODO: use input nodes to alter batch size
 
         batch_size = batch.input_id.size(0)
         idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0]
@@ -282,7 +317,7 @@ class LitGnnFs(L.LightningModule):
             gene_exp=data.x[:, data.gene_exp_ind],
             edge_index=data.edge_index,
             xyz=data.x[:, data.xyz_ind],
-            temp=exp_decay_temp_schedule(self.current_epoch, self.trainer.max_epochs),
+            tau=exp_decay_tau_schedule(self.current_epoch, self.trainer.max_epochs),
             hard_=False,
         )
 
@@ -316,8 +351,8 @@ class LitGnnFs(L.LightningModule):
         return optimizer
 
 
-def exp_decay_temp_schedule(epoch, total_epoch):
-    start_temp = 10
-    end_temp = 0.01
-    temp = start_temp * (end_temp / start_temp) ** (epoch / total_epoch)
-    return temp
+def exp_decay_tau_schedule(epoch, total_epoch):
+    start_tau = 10
+    end_tau = 0.01
+    tau = start_tau * (end_tau / start_tau) ** (epoch / total_epoch)
+    return tau
