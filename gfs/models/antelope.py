@@ -296,6 +296,7 @@ class LitGnnFs(L.LightningModule):
         self.log("train_loss_ce", train_loss_ce, **options)
         self.log("train_metric_overall_acc", train_metric_overall_acc, **options)
         self.log("train_metric_macro_acc", train_metric_macro_acc, **options)
+        self.log("tau", exp_decay_tau_schedule(self.current_epoch, self.trainer.max_epochs), **options)
         return train_loss_ce
 
     def on_train_epoch_end(self):
