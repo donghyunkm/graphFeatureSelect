@@ -129,7 +129,9 @@ class GnnFs(torch.nn.Module):
         """
         if self.training:
             # sample soft k-hot vectors for each subgraph in the batch during training
-            n_subgraphs = subgraph_id.unique().size(0)
+            # extra samples are harmless, makes indexing more straightforward;
+            # case: e.g. subgraph_id.unique() = [0, 2, 3, 4]
+            n_subgraphs = subgraph_id.max() + 1
             # sample has dims (n_selections, n_subgraphs, n_features)
             sample = F.gumbel_softmax(self.logits.unsqueeze(1).repeat(1, n_subgraphs, 1), tau=tau, hard=False, dim=-1)
             # k_hot has dims (n_subgraphs, n_features)

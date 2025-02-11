@@ -42,7 +42,7 @@ model:
 logging:
   log_dir: "logs"
   checkpoint_dir: "checkpoints"
-  on_step: true
+  on_step: false
   on_epoch: true
   prog_bar: true
   logger: true
