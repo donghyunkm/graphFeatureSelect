@@ -152,6 +152,35 @@ class PyGAnnData:
         )
 
 
+class NeighborLoaderMod:
+    """Custom NeighborLoader wrapper that modifies each batch before yielding."""
+
+    def __init__(self, neighborloader_obj, n_hops):
+        self.neighborloader_obj = neighborloader_obj
+        self.n_hops = n_hops
+
+    def __iter__(self):
+        """Returns an iterator that includes subgraph_id field."""
+        for batch in self.neighborloader_obj:
+            
+            batch.subgraph_id = torch.zeros(batch.x.size(0), dtype=torch.long)
+
+            # start from each input_node and traverse outwards
+            input_nodes = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0]
+            for i, this_node in enumerate(input_nodes):
+                nhood_list = [this_node.unsqueeze(-1)]
+                for _ in range(self.n_hops):
+                    these_edges = torch.any(torch.isin(batch.edge_index, nhood_list[-1]), dim=0)
+                    nhood_list.append(batch.edge_index[:, these_edges].unique())
+                node_inds = torch.cat(nhood_list, dim=0).unique()
+                batch.subgraph_id[node_inds] = i
+
+            yield batch
+
+    def __len__(self):
+        return len(self.neighborloader_obj)
+
+
 class PyGAnnDataGraphDataModule(L.LightningDataModule):
     """
     Data module using PyG functions to return graph patches.
@@ -198,7 +227,7 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
         self.data = self.dataset.get_pygdata_obj()
 
     def train_dataloader(self):
-        return NeighborLoader(
+        og = NeighborLoader(
             self.data,
             num_neighbors=[-1] * self.n_hops,
             batch_size=self.batch_size,
@@ -206,9 +235,10 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
             num_workers=32,
             input_nodes=self.data.train_mask,
         )
+        return NeighborLoaderMod(og, self.n_hops)
 
     def val_dataloader(self):
-        return NeighborLoader(
+        og = NeighborLoader(
             self.data,
             input_nodes=self.data.val_mask,
             num_neighbors=[-1] * self.n_hops,
@@ -216,9 +246,10 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
             shuffle=False,
             num_workers=16,
         )
+        return NeighborLoaderMod(og, self.n_hops)
 
     def test_dataloader(self):
-        return NeighborLoader(
+        og = NeighborLoader(
             self.data,
             input_nodes=self.data.test_mask,
             num_neighbors=[-1] * self.n_hops,
@@ -226,9 +257,10 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
             shuffle=False,
             num_workers=16,
         )
+        return NeighborLoaderMod(og, self.n_hops)
 
     def predict_dataloader(self):
-        return NeighborLoader(
+        og = NeighborLoader(
             self.data,
             input_nodes=None,
             num_neighbors=[-1] * self.n_hops,
@@ -236,6 +268,7 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
             shuffle=False,
             num_workers=16,
         )
+        return NeighborLoaderMod(og, self.n_hops)
 
 
 def test_pyganndatagraphdatamodule():
@@ -248,7 +281,7 @@ def test_pyganndatagraphdatamodule():
     datamodule = PyGAnnDataGraphDataModule(
         data_dir=path,
         file_names=["test_one_section_hemi.h5ad"],
-        batch_size=1,
+        batch_size=2,
         n_hops=2,
         cell_type="subclass",
         spatial_coords=["x_section", "y_section", "z_section"],

@@ -5,9 +5,10 @@ import lightning as L
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch_geometric.transforms as T
 from torch_geometric.nn import GATConv, GCNConv, SAGEConv
 from torchmetrics.classification import MulticlassAccuracy
+
+from gfs.models.transforms import HalfHop
 
 
 class GnnFs(torch.nn.Module):
@@ -122,13 +123,26 @@ class GnnFs(torch.nn.Module):
         self.xyz_lin.reset_parameters()
         self.logits.reset_parameters()
 
-    def get_mask(self, tau, hard_):
+    def get_mask(self, tau, subgraph_id):
         """
         Get soft k-hot mask
         """
-        sample = F.gumbel_softmax(self.logits, tau=tau, hard=hard_)
-        k_hot = torch.max(sample, dim=0).values
-        return k_hot
+        if self.training:
+            # sample soft k-hot vectors for each subgraph in the batch during training
+            n_subgraphs = subgraph_id.unique().size(0)
+            # sample has dims (n_selections, n_subgraphs, n_features)
+            sample = F.gumbel_softmax(self.logits.unsqueeze(1).repeat(1, n_subgraphs, 1), tau=tau, hard=False, dim=-1)
+            # k_hot has dims (n_subgraphs, n_features)
+            k_hot = torch.max(sample, dim=0).values
+            # repeat k-hot masks for each node based on their subgraph membership
+            return k_hot[subgraph_id] 
+        else:
+            # return hard k-hot mask for evaluation
+            k_hot_ind = torch.argmax(self.logits, dim=1)
+            k_hot = torch.zeros(1, self.logits.size(1), device=self.logits.device)
+            k_hot.scatter_(1, k_hot_ind.unsqueeze(0), 1)
+            # k_hot has dims (1, n_features)
+            return k_hot
 
     def get_mask_indices(self):
         """
@@ -139,11 +153,8 @@ class GnnFs(torch.nn.Module):
         mask_probs = torch.gather(probs, dim=1, index=mask_indices.unsqueeze(1))
         return mask_indices, mask_probs.squeeze()
 
-    def forward(self, x, edge_index, xyz, tau, hard_):
-        # TODO: to match persist, we should generate as many k-hot masks as entries in the batch.
-        # This means generate a mask, and duplicate it for neighbors of each node.
-        # TODO: currently, we generate a single mask for the entire batch, which is likely inefficient.
-        mask = self.get_mask(tau, hard_)
+    def forward(self, x, edge_index, xyz, subgraph_id, tau, hard_):
+        mask = self.get_mask(tau, subgraph_id)
         x = mask * x
 
         if self.x_res:
@@ -215,7 +226,7 @@ class LitGnnFs(L.LightningModule):
         # related to training step
         self.halfhop = cfg.halfhop
         if self.halfhop:
-            self.transform = T.HalfHop(alpha=0.5)
+            self.transform = HalfHop(alpha=0.5, p=0.5)
         else:
             self.transform = lambda x: x
 
@@ -228,30 +239,30 @@ class LitGnnFs(L.LightningModule):
         self.metric_macro_acc = MulticlassAccuracy(average="macro", **options)
         self.metric_multiclass_acc = MulticlassAccuracy(average=None, **options)
 
-    def forward(self, gene_exp, edge_index, xyz, tau, hard_):
+    def forward(self, gene_exp, edge_index, xyz, subgraph_id, tau, hard_):
         """
         Args:
             gene_exp (torch.Tensor): (n_nodes, n_genes)
             edge_index (torch.Tensor): (2, n_edges)
             xyz (torch.Tensor): (n_nodes, 3)
+            subgraph_id (torch.Tensor): (n_nodes)
             tau (float): temperature for Gumbel-Softmax
             hard_ (bool): if True, use hard Gumbel-Softmax
         """
 
-        celltype = self.model(gene_exp, edge_index, xyz, tau, hard_)
+        celltype = self.model(gene_exp, edge_index, xyz, subgraph_id, tau, hard_)
         return celltype
 
     def training_step(self, batch, batch_idx):
-        # calculate losses and metrics for all nodes in the batch.
-        batch_size = batch.x.size(0)
-
-        # halfhop or pass-through
+        # calculate losses and metrics for all training nodes in the batch.
+        batch_size = torch.sum(batch.train_mask)
         data = self.transform(batch)
 
         celltype_pred = self.forward(
             gene_exp=data.x[:, data.gene_exp_ind],
             edge_index=data.edge_index,
             xyz=data.x[:, data.xyz_ind],
+            subgraph_id=data.subgraph_id,
             tau=exp_decay_tau_schedule(self.current_epoch, self.trainer.max_epochs),
             hard_=False,
         )
@@ -260,8 +271,10 @@ class LitGnnFs(L.LightningModule):
         if hasattr(data, "slow_node_mask"):
             celltype_pred = celltype_pred[~data.slow_node_mask]
 
-        # calculate losses and metrics
+        # calculate loss
         train_loss_ce = self.loss_ce(celltype_pred[data.train_mask], data.celltype[data.train_mask])
+
+        # calculate metrics
         train_metric_overall_acc = self.metric_overall_acc(
             preds=celltype_pred[data.train_mask], target=data.celltype[data.train_mask]
         )
@@ -317,8 +330,9 @@ class LitGnnFs(L.LightningModule):
             gene_exp=data.x[:, data.gene_exp_ind],
             edge_index=data.edge_index,
             xyz=data.x[:, data.xyz_ind],
+            subgraph_id=data.subgraph_id,
             tau=exp_decay_tau_schedule(self.current_epoch, self.trainer.max_epochs),
-            hard_=False,
+            hard_=True,
         )
 
         # conditionally remove "slow nodes" (from halfhop)

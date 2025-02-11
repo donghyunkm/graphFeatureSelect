@@ -4,7 +4,7 @@ from torch_geometric.data.datapipes import functional_transform
 from torch_geometric.transforms import BaseTransform
 
 
-@functional_transform("half_hop")
+# @functional_transform("half_hop")
 class HalfHop(BaseTransform):
     r"""The graph upsampling augmentation from the
     `"Half-Hop: A Graph Upsampling Approach for Slowing Down Message Passing"
@@ -43,6 +43,9 @@ class HalfHop(BaseTransform):
         self.alpha = alpha
 
     def forward(self, data: Data) -> Data:
+        assert hasattr(data, "subgraph_id"), "custom half-hop requires 'subgraph_id' attribute"
+
+        # ensure that data.edge_weight and data.edge_attr attributes do not exist
         if data.edge_weight is not None or data.edge_attr is not None:
             raise ValueError("'HalfHop' augmentation is not supported if 'data' contains 'edge_weight' or 'edge_attr'")
 
@@ -72,6 +75,10 @@ class HalfHop(BaseTransform):
         x_slow_node = self.alpha * x_src + (1 - self.alpha) * x_dst
         new_x = torch.cat([x, x_slow_node], dim=0)
 
+        # note: src and dst don't necessarily have the same subgraph_id
+        subgraph_id_src = data.subgraph_id[edge_index_to_halfhop[0]]
+        new_subgraph_id = torch.cat([data.subgraph_id, subgraph_id_src], dim=0)
+
         # add new edges between slow nodes and the original nodes
         edge_index_slow = [
             torch.stack([edge_index_to_halfhop[0], slow_node_ids]),
@@ -83,7 +90,7 @@ class HalfHop(BaseTransform):
         # prepare a mask that distinguishes between original nodes & slow nodes
         slow_node_mask = torch.cat([x.new_zeros(x.size(0)), x.new_ones(slow_node_ids.size(0))], dim=0).bool()
 
-        data.x, data.edge_index = new_x, new_edge_index
+        data.x, data.edge_index, data.subgraph_id = new_x, new_edge_index, new_subgraph_id
         data.slow_node_mask = slow_node_mask
 
         return data
