@@ -135,7 +135,7 @@ class GnnFs(torch.nn.Module):
             # k_hot has dims (n_subgraphs, n_features)
             k_hot = torch.max(sample, dim=0).values
             # repeat k-hot masks for each node based on their subgraph membership
-            return k_hot[subgraph_id] 
+            return k_hot[subgraph_id]
         else:
             # return hard k-hot mask for evaluation
             k_hot_ind = torch.argmax(self.logits, dim=1)

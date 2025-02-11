@@ -162,7 +162,6 @@ class NeighborLoaderMod:
     def __iter__(self):
         """Returns an iterator that includes subgraph_id field."""
         for batch in self.neighborloader_obj:
-            
             batch.subgraph_id = torch.zeros(batch.x.size(0), dtype=torch.long)
 
             # start from each input_node and traverse outwards
