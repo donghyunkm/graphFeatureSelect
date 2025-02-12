@@ -5,7 +5,7 @@ import lightning as L
 import numpy as np
 import torch
 from anndata._core.aligned_df import ImplicitModificationWarning
-from scipy.sparse import issparse
+from scipy.sparse import csr_matrix, issparse
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import LabelEncoder
 from torch_geometric.data import Data as PyGData
@@ -49,6 +49,7 @@ class PyGAnnData:
         keep_cells=None,
         spatial_coords=["x_ccf", "y_ccf", "z_ccf"],
         cell_type="supertype",
+        self_loops_only: bool = False,
         d_threshold=1000,
         n_splits=5,
         cv=0,
@@ -79,10 +80,16 @@ class PyGAnnData:
         self.d_threshold = d_threshold
 
         # calculate binary adjacency matrix
-        adj = self.adata.obsp["spatial_connectivities"].copy()
-        adj = adj.astype(bool).astype(int)
-        adj.setdiag(0)  # removing self-loops
-        self.adj = adj
+        if self_loops_only:
+            # make a 'scipy.sparse._csr.csr_matrix' all zeros
+            adj = csr_matrix(np.zeros((self.adata.shape[0], self.adata.shape[0]), dtype=int))
+            adj.setdiag(1)
+            self.adj = adj
+        else:
+            adj = self.adata.obsp["spatial_connectivities"].copy()
+            adj = adj.astype(bool).astype(int)
+            adj.setdiag(0)  # removing self-loops
+            self.adj = adj
 
         self.spatial_coords = spatial_coords
         self.cell_type = cell_type
@@ -193,6 +200,7 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
         n_hops: int = 2,
         cell_type: str = "subclass",
         spatial_coords: list[str] = ["x_section", "y_section", "z_section"],
+        self_loops_only: bool = False,
         d_threshold: float = 1000,
         n_splits: int = 5,
         cv: int = 0,
@@ -210,7 +218,7 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
         self.n_splits = n_splits
         self.cv = cv
         self.rand_seed = rand_seed
-
+        self.self_loops_only = self_loops_only
     def setup(self, stage: str):
         # including self.dataset for debugging.
         # consider removing this if we run into cpu memory limits.
@@ -218,6 +226,7 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
             self.adata_paths,
             spatial_coords=self.spatial_coords,
             cell_type=self.cell_type,
+            self_loops_only=self.self_loops_only,
             d_threshold=self.d_threshold,
             n_splits=self.n_splits,
             cv=self.cv,

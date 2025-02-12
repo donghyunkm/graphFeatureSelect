@@ -36,6 +36,7 @@ def main(config: DictConfig):
         file_names=config.data.file_names,
         cell_type=config.data.cell_type,
         spatial_coords=config.data.spatial_coords,
+        self_loops_only=config.data.self_loops_only,
         batch_size=config.data.batch_size,
         n_hops=config.data.n_hops,
         d_threshold=config.data.d_threshold,
