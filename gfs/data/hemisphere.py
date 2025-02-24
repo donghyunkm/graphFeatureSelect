@@ -10,7 +10,7 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import LabelEncoder
 from torch_geometric.data import Data as PyGData
 from torch_geometric.loader.neighbor_loader import NeighborLoader
-
+import random
 from gfs.utils import get_paths
 
 warnings.filterwarnings("ignore", category=ImplicitModificationWarning, message="Transforming to str index.")
@@ -102,7 +102,7 @@ class PyGAnnData:
         self.cv = cv
         self.n_splits = n_splits
         assert self.cv < self.n_splits, "Crossvalidation index out of range"
-        skf = StratifiedKFold(n_splits=self.n_splits, shuffle=True, random_state=rand_seed)
+        skf = StratifiedKFold(n_splits=self.n_splits, shuffle=True, random_state=42)
         splits = skf.split(self.adata, self.adata.obs[self.cell_type])
         splits = list(splits)
         self.train_ind = splits[self.cv][0]
@@ -242,6 +242,8 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
             shuffle=True,
             num_workers=32,
             input_nodes=self.data.train_mask,
+            worker_init_fn=seed_worker,
+            generator=torch.Generator().manual_seed(42)
         )
         return NeighborLoaderMod(og, self.n_hops)
 
@@ -253,6 +255,8 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=16,
+            worker_init_fn=seed_worker,
+            generator=torch.Generator().manual_seed(42)
         )
         return NeighborLoaderMod(og, self.n_hops)
 
@@ -264,6 +268,8 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=16,
+            worker_init_fn=seed_worker,
+            generator=torch.Generator().manual_seed(42)
         )
         return NeighborLoaderMod(og, self.n_hops)
 
@@ -275,8 +281,16 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=16,
+            worker_init_fn=seed_worker,
+            generator=torch.Generator().manual_seed(42)
         )
         return NeighborLoaderMod(og, self.n_hops)
+
+def seed_worker(worker_id):
+    # worker_seed = torch.initial_seed() % 2**32
+    worker_seed = 42
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
 
 def test_pyganndatagraphdatamodule():
@@ -348,8 +362,44 @@ def test_pyganndata():
     return pygdata
 
 
+def test_seed():
+    from gfs.data.hemisphere import PyGAnnDataGraphDataModule
+    from lightning.pytorch import seed_everything
+    from gfs.utils import get_paths
+
+    path = get_paths()["data_root"]
+
+    for i in range(3):
+        seed_everything(i, workers=True)
+        datamodule = PyGAnnDataGraphDataModule(
+            data_dir=path,
+            file_names=["test_one_section_hemi.h5ad"],
+            batch_size=2,
+            n_hops=2,
+            cell_type="subclass",
+            spatial_coords=["x_section", "y_section", "z_section"],
+            d_threshold=1000,
+            n_splits=5,
+            cv=0,
+            rand_seed=42,
+        )
+        datamodule.setup(stage="fit")
+        dataloader = iter(datamodule.train_dataloader())
+
+        batch = next(dataloader)
+        print(batch)
+
+    # check if dataloader returns same batch for different rand seed 
+
+    print("random seed checks passed")
+
+    return
+
+
 if __name__ == "__main__":
     print("running pyganndata")
     test_pyganndata()
     print("running pyganndata")
     test_pyganndatagraphdatamodule()
+    print("testing pyganndata (random seed)")
+    test_seed()

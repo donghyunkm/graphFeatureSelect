@@ -365,8 +365,28 @@ class LitGnnFs(L.LightningModule):
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.trainer.lr)
-        return optimizer
 
+        multistep_scheduler = torch.optim.lr_scheduler.MultiStepLR(
+            optimizer,
+            milestones=[100],
+            gamma=0.1 
+        )
+
+        if self.hparams.trainer.lr_scheduler == "multistep":
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": multistep_scheduler,
+                    "interval": "epoch",
+                    # interval="epoch" means scheduler is called at epoch boundaries
+                    # frequency=1 means scheduler is called every interval (every epoch)
+                    # e.g. frequency=2 would call scheduler every 2 epochs
+                    "frequency": 1
+                }
+            }
+            
+        elif self.hparams.trainer.lr_scheduler == "constant":
+            return optimizer
 
 def exp_decay_tau_schedule(epoch, total_epoch):
     start_tau = 10

@@ -37,7 +37,7 @@ model:
   jk: true
   x_res: true
   gnn: "gat"
-  xyz_status: false
+  xyz_status: true
   halfhop: true
 
 logging:
@@ -53,6 +53,7 @@ trainer:
   limit_val_batches: 100
   max_epochs: 200
   lr: 0.001
+  lr_scheduler: "constant"
 
 hydra:
   run:
