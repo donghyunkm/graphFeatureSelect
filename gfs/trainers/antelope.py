@@ -1,18 +1,31 @@
 import hydra
 import lightning as L
-from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch import seed_everything
+from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
 from omegaconf import DictConfig, OmegaConf
 
 from gfs.data.hemisphere import PyGAnnDataGraphDataModule
 from gfs.models.antelope import LitGnnFs
 from gfs.utils import get_datetime, get_paths
+import torch
+import random
+import numpy as np
 
+def setup_seeds(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 @hydra.main(config_path="../configs", config_name="antelope", version_base="1.2")
 def main(config: DictConfig):
     print(OmegaConf.to_yaml(config))
 
+    seed_everything(config.data.rand_seed, workers=False)
+    setup_seeds(config.data.rand_seed)
     # paths
     paths = get_paths()
     expname = get_datetime(expname=config.expname)
@@ -29,6 +42,9 @@ def main(config: DictConfig):
         save_top_k=1,
         every_n_epochs=1,
     )
+
+    lr_monitor = LearningRateMonitor(logging_interval='step')
+
 
     # data
     datamodule = PyGAnnDataGraphDataModule(
@@ -54,7 +70,11 @@ def main(config: DictConfig):
         limit_val_batches=config.trainer.limit_val_batches,
         max_epochs=config.trainer.max_epochs,
         logger=tb_logger,
-        callbacks=[checkpoint_callback],
+        callbacks=[checkpoint_callback, lr_monitor],
+        accelerator="gpu", 
+        devices=1,
+        deterministic=True
+        # accelerator="cpu"
     )
     trainer.fit(model=model, datamodule=datamodule)
 
