@@ -14,11 +14,20 @@
 #SBATCH --mail-user=dkim195@gsu.edu
 #SBATCH --oversubscribe
 #SBATCH --exclude=arctrdagn007
+#SBATCH --array=1-50
 
 sleep 10s
 
 export PATH=/data/users1/dkim195/miniconda3/bin:$PATH
 source /data/users1/dkim195/miniconda3/etc/profile.d/conda.sh
 conda activate /data/users1/dkim195/miniconda3/envs/gfs
-python ../gfs/trainers/antelope.py data.prefix="trainmode0_macrotest" data.cv=-1 trainer.max_epochs=500 model.n_select=20 trainer.lr_scheduler="constant" model.tautype="exp" model.trainmode=0 trainer.lr=0.001 data.batch_size=64
+
+# Specify the path to the config file
+config=/data/users1/dkim195/graphFeatureSelect/scripts/config.txt
+
+seed=$(awk -v ArrayTaskID=$SLURM_ARRAY_TASK_ID '$1==ArrayTaskID {print $2}' $config)
+fold=$(awk -v ArrayTaskID=$SLURM_ARRAY_TASK_ID '$1==ArrayTaskID {print $3}' $config)
+
+python ../gfs/trainers/antelope.py data.rand_seed=${seed} data.cv=${fold} model.n_select=20 data.prefix="0314_20_"
+
 sleep 30s

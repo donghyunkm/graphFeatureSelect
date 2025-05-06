@@ -10,7 +10,6 @@ from torchmetrics.classification import MulticlassAccuracy
 
 from gfs.models.transforms import HalfHop
 
-
 class GnnFs(torch.nn.Module):
     """
     This model features:
@@ -232,11 +231,17 @@ class LitGnnFs(L.LightningModule):
         else:
             self.transform = lambda x: x
 
+        self.tautype = cfg.tautype
+
+        self.trainmode = cfg.trainmode # 0 uses all training nodes; 1 uses only root nodes
+
         # losses
         self.loss_ce = nn.CrossEntropyLoss()
 
         # metrics
+        # options = {"num_classes": cfg.out_ch, "top_k": 1, "multidim_average": "global"}
         options = {"num_classes": cfg.out_ch, "top_k": 1, "multidim_average": "global"}
+
         self.metric_overall_acc = MulticlassAccuracy(average="weighted", **options)
         self.metric_macro_acc = MulticlassAccuracy(average="macro", **options)
         self.metric_multiclass_acc = MulticlassAccuracy(average=None, **options)
@@ -260,12 +265,17 @@ class LitGnnFs(L.LightningModule):
         batch_size = torch.sum(batch.train_mask)
         data = self.transform(batch)
 
+        if self.trainmode == 0:
+            idx = data.train_mask
+        elif self.trainmode == 1:
+            idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0]
+
         celltype_pred = self.forward(
             gene_exp=data.x[:, data.gene_exp_ind],
             edge_index=data.edge_index,
             xyz=data.x[:, data.xyz_ind],
             subgraph_id=data.subgraph_id,
-            tau=exp_decay_tau_schedule(self.current_epoch, self.trainer.max_epochs),
+            tau=tau_schedule(self.tautype, self.current_epoch, self.trainer.max_epochs),
             hard_=False,
         )
 
@@ -274,15 +284,17 @@ class LitGnnFs(L.LightningModule):
             celltype_pred = celltype_pred[~data.slow_node_mask]
 
         # calculate loss
-        train_loss_ce = self.loss_ce(celltype_pred[data.train_mask], data.celltype[data.train_mask])
+        train_loss_ce = self.loss_ce(celltype_pred[idx], data.celltype[idx])
 
         # calculate metrics
+
         train_metric_overall_acc = self.metric_overall_acc(
-            preds=celltype_pred[data.train_mask], target=data.celltype[data.train_mask]
+            preds=celltype_pred[idx], target=data.celltype[idx]
         )
         train_metric_macro_acc = self.metric_macro_acc(
-            preds=celltype_pred[data.train_mask], target=data.celltype[data.train_mask]
+            preds=celltype_pred[idx], target=data.celltype[idx]
         )
+
 
         # log losses and metrics
         options = {
@@ -296,7 +308,7 @@ class LitGnnFs(L.LightningModule):
         self.log("train_loss_ce", train_loss_ce, **options)
         self.log("train_metric_overall_acc", train_metric_overall_acc, **options)
         self.log("train_metric_macro_acc", train_metric_macro_acc, **options)
-        self.log("tau", exp_decay_tau_schedule(self.current_epoch, self.trainer.max_epochs), **options)
+        self.log("tau", tau_schedule(self.tautype, self.current_epoch, self.trainer.max_epochs), **options)
         return train_loss_ce
 
     def on_train_epoch_end(self):
@@ -334,7 +346,7 @@ class LitGnnFs(L.LightningModule):
             edge_index=data.edge_index,
             xyz=data.x[:, data.xyz_ind],
             subgraph_id=data.subgraph_id,
-            tau=exp_decay_tau_schedule(self.current_epoch, self.trainer.max_epochs),
+            tau=tau_schedule(self.tautype, self.current_epoch, self.trainer.max_epochs),
             hard_=True,
         )
 
@@ -363,6 +375,33 @@ class LitGnnFs(L.LightningModule):
     def on_validation_epoch_end(self):
         pass
 
+    def predict_step(self, batch, batch_idx):
+        # calculate losses and metrics for all nodes in the batch.
+
+        batch_size = batch.input_id.size(0)
+        idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0]
+
+        # halfhop or pass-through
+        data = self.transform(batch)
+
+        celltype_pred = self.forward(
+            gene_exp=data.x[:, data.gene_exp_ind],
+            edge_index=data.edge_index,
+            xyz=data.x[:, data.xyz_ind],
+            subgraph_id=data.subgraph_id,
+            tau=tau_schedule(self.tautype, self.current_epoch, self.trainer.max_epochs),
+            hard_=True,
+        )
+
+        # conditionally remove "slow nodes" (from halfhop)
+        if hasattr(data, "slow_node_mask"):
+            celltype_pred = celltype_pred[~data.slow_node_mask]
+
+        return [celltype_pred[idx], batch.celltype[idx]]
+
+    def on_predict_epoch_end(self):
+        pass
+
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.trainer.lr)
 
@@ -388,8 +427,13 @@ class LitGnnFs(L.LightningModule):
         elif self.hparams.trainer.lr_scheduler == "constant":
             return optimizer
 
-def exp_decay_tau_schedule(epoch, total_epoch):
+def tau_schedule(type, epoch, total_epoch):
     start_tau = 10
-    end_tau = 0.01
-    tau = start_tau * (end_tau / start_tau) ** (epoch / total_epoch)
+    end_tau = 0.01 
+    # end_tau = 0.1
+
+    if type == 'exp':
+        tau = start_tau * (end_tau / start_tau) ** (epoch / total_epoch)
+    elif type == "constant":
+        tau = 0.1
     return tau

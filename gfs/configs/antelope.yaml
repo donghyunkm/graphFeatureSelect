@@ -12,14 +12,14 @@ data:
     - "y_section"
     - "z_section"
   self_loops_only: false
-  batch_size: 5
+  batch_size: 64
   n_hops: 2
   num_workers: 16
   d_threshold: 1000
   n_splits: 5
   cv: 0
   rand_seed: 42
-
+  prefix: "test"
 model:
   name: "antelope"
   gene_ch: ${data.n_genes}
@@ -39,7 +39,8 @@ model:
   gnn: "gat"
   xyz_status: true
   halfhop: true
-
+  tautype: "exp"
+  trainmode: 0
 logging:
   log_dir: "logs"
   checkpoint_dir: "checkpoints"
@@ -51,8 +52,8 @@ logging:
 trainer:
   limit_train_batches: 1000
   limit_val_batches: 100
-  max_epochs: 200
-  lr: 0.001
+  max_epochs: 500
+  lr: 0.01
   lr_scheduler: "constant"
 
 hydra:

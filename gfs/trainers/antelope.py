@@ -4,7 +4,7 @@ from lightning.pytorch import seed_everything
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
 from omegaconf import DictConfig, OmegaConf
-
+import pickle
 from gfs.data.hemisphere import PyGAnnDataGraphDataModule
 from gfs.models.antelope import LitGnnFs
 from gfs.utils import get_datetime, get_paths
@@ -28,7 +28,9 @@ def main(config: DictConfig):
     setup_seeds(config.data.rand_seed)
     # paths
     paths = get_paths()
-    expname = get_datetime(expname=config.expname)
+    expname_config = f"{config.data.prefix}_s{config.data.rand_seed}_f{config.data.cv}"
+    # expname = get_datetime(expname=config.expname)
+    expname = get_datetime(expname=expname_config)
     log_path = paths["data_root"] + f"logs/{expname}"
     checkpoint_path = paths["data_root"] + f"checkpoints/{expname}"
 
@@ -77,7 +79,10 @@ def main(config: DictConfig):
         # accelerator="cpu"
     )
     trainer.fit(model=model, datamodule=datamodule)
-
+    pred_y = trainer.predict(ckpt_path="best", datamodule=datamodule)
+    
+    with open(checkpoint_path + '/pred_y.pkl', 'wb') as file:
+        pickle.dump(pred_y, file)
 
 if __name__ == "__main__":
     main()
