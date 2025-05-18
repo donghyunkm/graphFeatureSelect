@@ -10,6 +10,42 @@ from torchmetrics.classification import MulticlassAccuracy
 
 from gfs.models.transforms import HalfHop
 
+class MLP(nn.Module):
+    '''
+    Multilayer perceptron (MLP) model.
+
+    Args:
+      input_size: number of inputs.
+      output_size: number of outputs.
+      hidden: list of hidden layer widths.
+      activation: nonlinearity between layers.
+    '''
+
+    def __init__(self,
+                 input_size,
+                 output_size,
+                 hidden,
+                 activation=nn.ReLU()):
+        super().__init__()
+
+        # Fully connected layers.
+        self.input_size = input_size
+        self.output_size = output_size
+        fc_layers = [nn.Linear(d_in, d_out) for d_in, d_out in
+                     zip([input_size] + hidden, hidden + [output_size])]
+        self.fc = nn.ModuleList(fc_layers)
+
+        # Activation function.
+        self.activation = activation
+
+    def forward(self, x):
+        for fc in self.fc[:-1]:
+            x = fc(x)
+            x = self.activation(x)
+
+        return self.fc[-1](x)
+
+
 class GnnFs(torch.nn.Module):
     """
     This model features:
@@ -103,7 +139,7 @@ class GnnFs(torch.nn.Module):
         self.pred_local = torch.nn.Linear(hid_ch, out_ch)
 
         if self.x_res:
-            self.res_lin = torch.nn.Linear(gene_ch, out_ch)
+            self.res_lin = MLP(gene_ch, out_ch, [128, 128], nn.ReLU())
         if self.xyz_status:
             self.xyz_lin = torch.nn.Linear(spatial_ch, out_ch)
 
@@ -189,8 +225,6 @@ class GnnFs(torch.nn.Module):
 
         if self.x_res:
             x = x + x_to_add
-
-        # TODO: why add here?
         if self.xyz_status:
             x = x + xyz
 
@@ -239,12 +273,13 @@ class LitGnnFs(L.LightningModule):
         self.loss_ce = nn.CrossEntropyLoss()
 
         # metrics
-        # options = {"num_classes": cfg.out_ch, "top_k": 1, "multidim_average": "global"}
         options = {"num_classes": cfg.out_ch, "top_k": 1, "multidim_average": "global"}
 
-        self.metric_overall_acc = MulticlassAccuracy(average="weighted", **options)
-        self.metric_macro_acc = MulticlassAccuracy(average="macro", **options)
-        self.metric_multiclass_acc = MulticlassAccuracy(average=None, **options)
+        self.train_overall_acc = MulticlassAccuracy(average="weighted", **options)
+        self.val_overall_acc = MulticlassAccuracy(average="weighted", **options)
+
+        # self.train_macro_acc = MulticlassAccuracy(average="macro", **options)
+        # self.val_macro_acc = MulticlassAccuracy(average="macro", **options)
 
     def forward(self, gene_exp, edge_index, xyz, subgraph_id, tau, hard_):
         """
@@ -287,14 +322,8 @@ class LitGnnFs(L.LightningModule):
         train_loss_ce = self.loss_ce(celltype_pred[idx], data.celltype[idx])
 
         # calculate metrics
-
-        train_metric_overall_acc = self.metric_overall_acc(
-            preds=celltype_pred[idx], target=data.celltype[idx]
-        )
-        train_metric_macro_acc = self.metric_macro_acc(
-            preds=celltype_pred[idx], target=data.celltype[idx]
-        )
-
+        self.train_overall_acc(preds=celltype_pred[idx], target=data.celltype[idx])
+        # self.train_macro_acc(preds=celltype_pred[idx], target=data.celltype[idx])
 
         # log losses and metrics
         options = {
@@ -305,9 +334,11 @@ class LitGnnFs(L.LightningModule):
             "batch_size": batch_size,
         }
 
-        self.log("train_loss_ce", train_loss_ce, **options)
-        self.log("train_metric_overall_acc", train_metric_overall_acc, **options)
-        self.log("train_metric_macro_acc", train_metric_macro_acc, **options)
+        # https://lightning.ai/docs/torchmetrics/stable/pages/lightning.html
+
+        self.log("train_loss_ce", self.loss_ce, **options)
+        self.log("train_overall_acc", self.train_overall_acc, **options)
+        # self.log("train_macro_acc", self.train_macro_acc, **options)
         self.log("tau", tau_schedule(self.tautype, self.current_epoch, self.trainer.max_epochs), **options)
         return train_loss_ce
 
@@ -355,9 +386,9 @@ class LitGnnFs(L.LightningModule):
             celltype_pred = celltype_pred[~data.slow_node_mask]
 
         # calculate losses and metrics
-        val_loss_ce = self.loss_ce(celltype_pred[idx], batch.celltype[idx])
-        val_metric_overall_acc = self.metric_overall_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
-        val_metric_macro_acc = self.metric_macro_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
+        self.loss_ce(celltype_pred[idx], batch.celltype[idx])
+        self.val_overall_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
+        # self.val_macro_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
 
         # log losses and metrics
         options = {
@@ -368,9 +399,9 @@ class LitGnnFs(L.LightningModule):
             "batch_size": batch_size,
         }
 
-        self.log("val_loss_ce", val_loss_ce, **options)
-        self.log("val_metric_overall_acc", val_metric_overall_acc, **options)
-        self.log("val_metric_macro_acc", val_metric_macro_acc, **options)
+        self.log("val_loss_ce", self.loss_ce, **options)
+        self.log("val_overall_acc", self.val_overall_acc, **options)
+        # self.log("val_macro_acc", self.val_macro_acc, **options)
 
     def on_validation_epoch_end(self):
         pass
@@ -430,7 +461,6 @@ class LitGnnFs(L.LightningModule):
 def tau_schedule(type, epoch, total_epoch):
     start_tau = 10
     end_tau = 0.01 
-    # end_tau = 0.1
 
     if type == 'exp':
         tau = start_tau * (end_tau / start_tau) ** (epoch / total_epoch)
