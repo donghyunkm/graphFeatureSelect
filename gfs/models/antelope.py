@@ -139,7 +139,8 @@ class GnnFs(torch.nn.Module):
         self.pred_local = torch.nn.Linear(hid_ch, out_ch)
 
         if self.x_res:
-            self.res_lin = MLP(gene_ch, out_ch, [128, 128], nn.ReLU())
+            # self.res_lin = torch.nn.Linear(gene_ch, out_ch) old 
+            self.res_lin = MLP(gene_ch, out_ch, [128, 128], nn.ReLU()) # new (from Persist)
         if self.xyz_status:
             self.xyz_lin = torch.nn.Linear(spatial_ch, out_ch)
 
@@ -225,6 +226,8 @@ class GnnFs(torch.nn.Module):
 
         if self.x_res:
             x = x + x_to_add
+
+        # TODO: why add here?
         if self.xyz_status:
             x = x + xyz
 
@@ -273,6 +276,7 @@ class LitGnnFs(L.LightningModule):
         self.loss_ce = nn.CrossEntropyLoss()
 
         # metrics
+        # options = {"num_classes": cfg.out_ch, "top_k": 1, "multidim_average": "global"}
         options = {"num_classes": cfg.out_ch, "top_k": 1, "multidim_average": "global"}
 
         self.train_overall_acc = MulticlassAccuracy(average="weighted", **options)
@@ -322,8 +326,10 @@ class LitGnnFs(L.LightningModule):
         train_loss_ce = self.loss_ce(celltype_pred[idx], data.celltype[idx])
 
         # calculate metrics
+
         self.train_overall_acc(preds=celltype_pred[idx], target=data.celltype[idx])
         # self.train_macro_acc(preds=celltype_pred[idx], target=data.celltype[idx])
+
 
         # log losses and metrics
         options = {
@@ -334,9 +340,7 @@ class LitGnnFs(L.LightningModule):
             "batch_size": batch_size,
         }
 
-        # https://lightning.ai/docs/torchmetrics/stable/pages/lightning.html
-
-        self.log("train_loss_ce", self.loss_ce, **options)
+        self.log("train_loss_ce", train_loss_ce, **options)
         self.log("train_overall_acc", self.train_overall_acc, **options)
         # self.log("train_macro_acc", self.train_macro_acc, **options)
         self.log("tau", tau_schedule(self.tautype, self.current_epoch, self.trainer.max_epochs), **options)
@@ -386,7 +390,7 @@ class LitGnnFs(L.LightningModule):
             celltype_pred = celltype_pred[~data.slow_node_mask]
 
         # calculate losses and metrics
-        self.loss_ce(celltype_pred[idx], batch.celltype[idx])
+        val_loss_ce = self.loss_ce(celltype_pred[idx], batch.celltype[idx])
         self.val_overall_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
         # self.val_macro_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
 
@@ -399,7 +403,7 @@ class LitGnnFs(L.LightningModule):
             "batch_size": batch_size,
         }
 
-        self.log("val_loss_ce", self.loss_ce, **options)
+        self.log("val_loss_ce", val_loss_ce, **options)
         self.log("val_overall_acc", self.val_overall_acc, **options)
         # self.log("val_macro_acc", self.val_macro_acc, **options)
 
@@ -461,6 +465,7 @@ class LitGnnFs(L.LightningModule):
 def tau_schedule(type, epoch, total_epoch):
     start_tau = 10
     end_tau = 0.01 
+    # end_tau = 0.1
 
     if type == 'exp':
         tau = start_tau * (end_tau / start_tau) ** (epoch / total_epoch)
