@@ -144,6 +144,14 @@ class PyGAnnData:
         val_mask = torch.zeros(self.adata.shape[0], dtype=torch.bool)
         val_mask[self.val_ind] = True
 
+        if self.cv < 0:
+            if self.paths[0] == "test_one_section_hemi.h5ad":
+                train_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_visp/train_mask.pt')
+                val_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_visp/val_mask.pt')
+            elif self.paths[0] == "Zhuang-ABCA-1-section80.h5ad":
+                train_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_zhuang/train_mask.pt')
+                val_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_zhuang/val_mask.pt')
+
         x = torch.cat([gene_exp, xyz], dim=1)
         gene_exp_ind = torch.arange(gene_exp.shape[1])
         xyz_ind = torch.arange(gene_exp.shape[1], gene_exp.shape[1] + xyz.shape[1])
@@ -276,7 +284,7 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
     def predict_dataloader(self):
         og = NeighborLoader(
             self.data,
-            input_nodes=None,
+            input_nodes=self.data.val_mask,
             num_neighbors=[-1] * self.n_hops,
             batch_size=self.batch_size,
             shuffle=False,
@@ -313,6 +321,9 @@ def test_pyganndatagraphdatamodule():
         rand_seed=42,
     )
     datamodule.setup(stage="fit")
+
+    # datamodule.data.train_mask
+
     dataloader = iter(datamodule.train_dataloader())
 
     for i in range(3):
@@ -337,6 +348,149 @@ def test_pyganndatagraphdatamodule():
         assert len(set(nhood_) - set(nhood)) == 0, "Difference between ref_cell_nhood and nhood is not empty"
 
     print("anndatagraphdatamodule checks passed")
+
+    return
+
+
+def numnodes_pyganndatagraphdatamodule_train():
+    import numpy as np
+
+    from gfs.data.hemisphere import PyGAnnDataGraphDataModule
+    from gfs.utils import get_paths
+
+    path = get_paths()["data_root"]
+    datamodule = PyGAnnDataGraphDataModule(
+        data_dir=path,
+        file_names=["test_one_section_hemi.h5ad"],
+        batch_size=2,
+        n_hops=2,
+        cell_type="subclass",
+        spatial_coords=["x_section", "y_section", "z_section"],
+        d_threshold=1000,
+        n_splits=5,
+        cv=-1,
+        rand_seed=42,
+    )
+    datamodule.setup(stage="train")
+
+    # datamodule.data.train_mask
+
+    dataloader = iter(datamodule.train_dataloader())
+    print("Num samples in train ", torch.sum(datamodule.data.train_mask)) # Num samples in train  tensor(46333)
+    sum_nodes = 0
+    for i, batch in enumerate(dataloader):
+        sum_nodes += len(batch.input_id)
+
+    print("sum input nodes: ", sum_nodes) # sum input nodes:  46333
+    print("numnodes checks passed")
+
+    return
+
+
+
+def input_id_check():
+    import numpy as np
+
+    from gfs.data.hemisphere import PyGAnnDataGraphDataModule
+    from gfs.utils import get_paths
+
+    path = get_paths()["data_root"]
+    datamodule = PyGAnnDataGraphDataModule(
+        data_dir=path,
+        file_names=["test_one_section_hemi.h5ad"],
+        batch_size=2,
+        n_hops=2,
+        cell_type="subclass",
+        spatial_coords=["x_section", "y_section", "z_section"],
+        d_threshold=1000,
+        n_splits=5,
+        cv=-1,
+        rand_seed=42,
+    )
+    datamodule.setup(stage="train")
+
+    # datamodule.data.train_mask
+
+    dataloader = iter(datamodule.train_dataloader())
+    print("Num samples in train ", torch.sum(datamodule.data.train_mask)) # Num samples in train  
+    sum_nodes = 0
+    for i, batch in enumerate(dataloader):
+        idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0]
+        sum_nodes += len(idx)
+    print("sum n_id nodes: ", sum_nodes) # sum n_id nodes:  46333
+    print("numnodes checks passed")
+
+    return
+
+
+
+
+
+def numnodes_pyganndatagraphdatamodule():
+    import numpy as np
+
+    from gfs.data.hemisphere import PyGAnnDataGraphDataModule
+    from gfs.utils import get_paths
+
+    path = get_paths()["data_root"]
+    datamodule = PyGAnnDataGraphDataModule(
+        data_dir=path,
+        file_names=["test_one_section_hemi.h5ad"],
+        batch_size=2,
+        n_hops=2,
+        cell_type="subclass",
+        spatial_coords=["x_section", "y_section", "z_section"],
+        d_threshold=1000,
+        n_splits=5,
+        cv=-1,
+        rand_seed=42,
+    )
+    datamodule.setup(stage="train")
+
+    # datamodule.data.train_mask
+
+    dataloader = iter(datamodule.val_dataloader())
+    print("Num samples in val ", torch.sum(datamodule.data.val_mask)) # Num samples in val  tensor(11584)
+    sum_nodes = 0
+    for i, batch in enumerate(dataloader):
+        sum_nodes += len(batch.input_id)
+
+    print("sum input nodes: ", sum_nodes) # sum input nodes:  11584
+    print("numnodes checks passed")
+
+    return
+
+def numnodes_pyganndatagraphdatamodule2():
+    import numpy as np
+
+    from gfs.data.hemisphere import PyGAnnDataGraphDataModule
+    from gfs.utils import get_paths
+
+    path = get_paths()["data_root"]
+    datamodule = PyGAnnDataGraphDataModule(
+        data_dir=path,
+        file_names=["test_one_section_hemi.h5ad"],
+        batch_size=4, # seed/root nodes
+        n_hops=2,
+        cell_type="subclass",
+        spatial_coords=["x_section", "y_section", "z_section"],
+        d_threshold=1000,
+        n_splits=5,
+        cv=-1,
+        rand_seed=42,
+    )
+    datamodule.setup(stage="train")
+
+    # datamodule.data.train_mask
+
+    dataloader = iter(datamodule.val_dataloader())
+    print("Num samples in val ", torch.sum(datamodule.data.val_mask)) # Num samples in val  tensor(11584)
+    sum_nodes = 0
+    for i, batch in enumerate(dataloader):
+        sum_nodes += int(torch.sum(batch.val_mask))
+ 
+    print("sum input nodes: ", sum_nodes) # sum all neighboring nodes and input nodes:  126495
+    print("numnodes checks passed")
 
     return
 
@@ -374,7 +528,7 @@ def test_seed():
         datamodule = PyGAnnDataGraphDataModule(
             data_dir=path,
             file_names=["test_one_section_hemi.h5ad"],
-            batch_size=2,
+            batch_size=2, # seed nodes
             n_hops=2,
             cell_type="subclass",
             spatial_coords=["x_section", "y_section", "z_section"],
@@ -397,9 +551,12 @@ def test_seed():
 
 
 if __name__ == "__main__":
-    print("running pyganndata")
-    test_pyganndata()
-    print("running pyganndata")
-    test_pyganndatagraphdatamodule()
-    print("testing pyganndata (random seed)")
-    test_seed()
+    # print("running pyganndata")
+    # test_pyganndata()
+    # print("running pyganndata")
+    # test_pyganndatagraphdatamodule()
+    # print("testing pyganndata (random seed)")
+    # test_seed()
+
+    print("test")
+    input_id_check()

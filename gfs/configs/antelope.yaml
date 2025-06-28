@@ -6,6 +6,7 @@ data:
     - "test_one_section_hemi.h5ad"
   n_genes: 500
   n_labels: 158
+  # Zhuang: data.n_genes=1122; data.n_labels=138
   cell_type: "subclass"
   spatial_coords:
     - "x_section"
@@ -17,7 +18,7 @@ data:
   num_workers: 16
   d_threshold: 1000
   n_splits: 5
-  cv: 0
+  cv: -1
   rand_seed: 42
   prefix: "test"
 model:
@@ -26,7 +27,7 @@ model:
   spatial_ch: 3 # should match length of spatial_coords
   hid_ch: 32
   out_ch: ${data.n_labels}
-  n_select: 10
+  n_select: 20
   local_layers: 2
   dropout: 0.5
   heads: 1
@@ -41,6 +42,7 @@ model:
   halfhop: true
   tautype: "exp"
   trainmode: 0
+  mask_type: 0
 logging:
   log_dir: "logs"
   checkpoint_dir: "checkpoints"
@@ -53,7 +55,7 @@ trainer:
   limit_train_batches: 1000
   limit_val_batches: 100
   max_epochs: 500
-  lr: 0.01
+  lr: 0.001
   lr_scheduler: "constant"
 
 hydra:
