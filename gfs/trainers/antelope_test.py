@@ -52,6 +52,7 @@ def main(config: DictConfig):
     datamodule = PyGAnnDataGraphDataModule(
         data_dir=paths["data_root"],
         file_names=config.data.file_names,
+        test_names=config.data.test_names,
         cell_type=config.data.cell_type,
         spatial_coords=config.data.spatial_coords,
         self_loops_only=config.data.self_loops_only,
@@ -78,13 +79,8 @@ def main(config: DictConfig):
         deterministic=True
         # accelerator="cpu"
     )
-    trainer.fit(model=model, datamodule=datamodule)
-    # pred_y = trainer.predict(ckpt_path="best", datamodule=datamodule)
-    
-    # with open(checkpoint_path + '/pred_y.pkl', 'wb') as file:
-    #     pickle.dump(pred_y, file)
-
-    trainer.test(model=model, ckpt_path="best", datamodule=datamodule)
+    path = "/data/users1/dkim195/graphFeatureSelect/data/checkpoints/20250926_072021_celltype_0925_select80_s42_f-1/epoch=203-val_overall_acc=0.87.ckpt"
+    trainer.test(model=model, ckpt_path=path, datamodule=datamodule)
 
 
 if __name__ == "__main__":

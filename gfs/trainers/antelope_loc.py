@@ -6,7 +6,7 @@ from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
 from omegaconf import DictConfig, OmegaConf
 import pickle
 from gfs.data.hemisphere import PyGAnnDataGraphDataModule
-from gfs.models.antelope import LitGnnFs
+from gfs.models.antelope_loc import LitGnnFs
 from gfs.utils import get_datetime, get_paths
 import torch
 import random
@@ -38,7 +38,7 @@ def main(config: DictConfig):
     tb_logger = TensorBoardLogger(save_dir=log_path)
     checkpoint_callback = ModelCheckpoint(
         dirpath=checkpoint_path,
-        monitor="val_overall_acc",
+        monitor="val_loss",
         filename="{epoch}-{val_overall_acc:.2f}",
         mode="max",
         save_top_k=1,
@@ -79,13 +79,10 @@ def main(config: DictConfig):
         # accelerator="cpu"
     )
     trainer.fit(model=model, datamodule=datamodule)
-    # pred_y = trainer.predict(ckpt_path="best", datamodule=datamodule)
+    pred_y = trainer.predict(ckpt_path="best", datamodule=datamodule)
     
-    # with open(checkpoint_path + '/pred_y.pkl', 'wb') as file:
-    #     pickle.dump(pred_y, file)
-
-    trainer.test(model=model, ckpt_path="best", datamodule=datamodule)
-
+    with open(checkpoint_path + '/pred_y.pkl', 'wb') as file:
+        pickle.dump(pred_y, file)
 
 if __name__ == "__main__":
     main()

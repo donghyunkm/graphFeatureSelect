@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from anndata._core.aligned_df import ImplicitModificationWarning
 from scipy.sparse import csr_matrix, issparse
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.preprocessing import LabelEncoder
 from torch_geometric.data import Data as PyGData
 from torch_geometric.loader.neighbor_loader import NeighborLoader
@@ -15,11 +15,20 @@ from gfs.utils import get_paths
 
 warnings.filterwarnings("ignore", category=ImplicitModificationWarning, message="Transforming to str index.")
 
+class StratifiedKFold3(StratifiedKFold):
+
+    def split(self, X, y, groups=None):
+        s = super().split(X, y, groups)
+        for train_indxs, test_indxs in s:
+            y_train = y[train_indxs]
+            train_indxs, cv_indxs = train_test_split(train_indxs,stratify=y_train, test_size=(1 / (self.n_splits - 1)))
+            yield train_indxs, cv_indxs, test_indxs
+
 
 def read_check_h5ad(path):
     adata = ad.read_h5ad(path)
-    for field in ["spatial_connectivities", "spatial_distances"]:
-        assert field in adata.obsp.keys(), f"{field} absent: Run `sc.pp.neighbors` first for {path}"
+    for field in ["spatial_connectivities"]:
+        assert field in adata.obsp.keys(), f"{field} absent: Run `sklearn.neighbors.kneighbors_graph` first for {path}"
     return adata
 
 
@@ -40,6 +49,7 @@ class PyGAnnData:
         cell_type (str): Anndata.obs column for cell types.
         d_threshold (float): Distance threshold (in mm) for considering neighbors.
         rand_seed (int): Random seed for reproducibility of train/val split.
+        test_data (bool): test dataset status
     """
 
     def __init__(
@@ -54,10 +64,11 @@ class PyGAnnData:
         n_splits=5,
         cv=0,
         rand_seed=42,
+        test_data=False
     ):
         super().__init__()
         self.paths = paths
-
+        self.test_data = test_data
         adata = read_check_h5ad(self.paths[0])
         if len(self.paths) > 1:
             for i in range(1, len(self.paths)):
@@ -91,22 +102,39 @@ class PyGAnnData:
             adj.setdiag(0)  # removing self-loops
             self.adj = adj
 
-        self.spatial_coords = spatial_coords
+
         self.cell_type = cell_type
+        cell_type_col = adata.obs[self.cell_type]
+        cell_type_counts = cell_type_col.value_counts()
+        valid_cell_types = cell_type_counts[cell_type_counts >= 5].index
+        mask = cell_type_col.isin(valid_cell_types)
+        self.adata = adata[mask]
+
+
+
+        self.spatial_coords = spatial_coords
+        
         self.cell_type_list = adata.obs[cell_type].cat.categories.tolist()
         self.cell_type_labelencoder = LabelEncoder()
         self.cell_type_labelencoder.fit(self.cell_type_list)
         self.data_issparse = issparse(adata.X)
 
+
+
         # reproducible train/val split for crossvalidation 5 folds using StratifiedKFold
         self.cv = cv
         self.n_splits = n_splits
         assert self.cv < self.n_splits, "Crossvalidation index out of range"
-        skf = StratifiedKFold(n_splits=self.n_splits, shuffle=True, random_state=42)
+        # skf = StratifiedKFold(n_splits=self.n_splits, shuffle=True, random_state=42)
+        # splits = skf.split(self.adata, self.adata.obs[self.cell_type])
+        # splits = list(splits)
+        # self.train_ind = splits[self.cv][0]
+        # self.val_ind = splits[self.cv][1]
+
+        skf = StratifiedKFold3(n_splits=self.n_splits, shuffle=True, random_state=42)
         splits = skf.split(self.adata, self.adata.obs[self.cell_type])
-        splits = list(splits)
-        self.train_ind = splits[self.cv][0]
-        self.val_ind = splits[self.cv][1]
+        self.train_ind, self.val_ind, self.test_ind = list(splits)[self.cv]
+
 
     def convert_torch_sparse_coo(self, adj):
         coo_matrix = adj.tocoo()
@@ -143,25 +171,41 @@ class PyGAnnData:
         train_mask[self.train_ind] = True
         val_mask = torch.zeros(self.adata.shape[0], dtype=torch.bool)
         val_mask[self.val_ind] = True
+        test_mask = torch.zeros(self.adata.shape[0], dtype=torch.bool)
+        test_mask[self.test_ind] = True
 
+        print("146 ", self.paths, self.paths[0])
         if self.cv < 0:
-            if self.paths[0] == "test_one_section_hemi.h5ad":
-                train_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_visp/train_mask.pt')
-                val_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_visp/val_mask.pt')
-            elif self.paths[0] == "Zhuang-ABCA-1-section80.h5ad":
-                train_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_zhuang/train_mask.pt')
-                val_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_zhuang/val_mask.pt')
-
+            train_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec/train_mask.pt')
+            val_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec/val_mask.pt')
+            test_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec/test_mask.pt')
+            # if "test_one_section_hemi.h5ad" in self.paths[0]:
+            #     print("AAA")
+            #     train_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_visp/train_mask.pt')
+            #     val_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_visp/val_mask.pt')
+            #     print(train_mask.shape, train_mask) # torch.Size([57917]) tensor([True, True, True,  ..., True, True, True])
+            # elif  "Zhuang-ABCA-1-section80.h5ad" in self.paths[0]:
+            #     print("BBB")
+            #     train_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_zhuang/train_mask.pt')
+            #     val_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_zhuang/val_mask.pt')
+            print("CCC")
         x = torch.cat([gene_exp, xyz], dim=1)
         gene_exp_ind = torch.arange(gene_exp.shape[1])
         xyz_ind = torch.arange(gene_exp.shape[1], gene_exp.shape[1] + xyz.shape[1])
+
+        if self.test_data:
+            val_mask = torch.ones(self.adata.shape[0], dtype=torch.bool)
+            train_mask = torch.ones(self.adata.shape[0], dtype=torch.bool)
+
         return PyGData(
             x=x,
             edge_index=edgelist,
             celltype=celltype,
+            xyz=xyz,
             num_nodes=gene_exp.shape[0],
             train_mask=train_mask,
             val_mask=val_mask,
+            test_mask=test_mask,
             gene_exp_ind=gene_exp_ind,
             xyz_ind=xyz_ind,
         )
@@ -204,6 +248,7 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
         self,
         data_dir: None,
         file_names: list[str] = ["VISp_nhood.h5ad"],
+        test_names: list[str] = ["visp_54.h5ad"],
         batch_size: int = 1,
         n_hops: int = 2,
         cell_type: str = "subclass",
@@ -218,6 +263,7 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
         if data_dir is None:
             data_dir = get_paths()["data_root"]
         self.adata_paths = [str(data_dir) + file_name for file_name in file_names]
+        self.test_paths = [str(data_dir) + test_name for test_name in test_names]
         self.batch_size = batch_size
         self.n_hops = n_hops
         self.cell_type = cell_type
@@ -239,8 +285,23 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
             n_splits=self.n_splits,
             cv=self.cv,
             rand_seed=self.rand_seed,
+            test_data=False
         )
         self.data = self.dataset.get_pygdata_obj()
+
+        self.dataset_test = PyGAnnData(
+            self.test_paths,
+            spatial_coords=self.spatial_coords,
+            cell_type=self.cell_type,
+            self_loops_only=self.self_loops_only,
+            d_threshold=self.d_threshold,
+            n_splits=self.n_splits,
+            cv=self.cv,
+            rand_seed=self.rand_seed,
+            test_data=True
+        )
+        self.data_test = self.dataset_test.get_pygdata_obj()
+
 
     def train_dataloader(self):
         og = NeighborLoader(
@@ -280,6 +341,19 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
             generator=torch.Generator().manual_seed(42)
         )
         return NeighborLoaderMod(og, self.n_hops)
+
+    # def test_dataloader(self):
+    #     og = NeighborLoader(
+    #         self.data_test,
+    #         input_nodes=self.data_test.val_mask,
+    #         num_neighbors=[-1] * self.n_hops,
+    #         batch_size=self.batch_size,
+    #         shuffle=False,
+    #         num_workers=16,
+    #         worker_init_fn=seed_worker,
+    #         generator=torch.Generator().manual_seed(42)
+    #     )
+    #     return NeighborLoaderMod(og, self.n_hops)
 
     def predict_dataloader(self):
         og = NeighborLoader(
@@ -361,14 +435,14 @@ def numnodes_pyganndatagraphdatamodule_train():
     path = get_paths()["data_root"]
     datamodule = PyGAnnDataGraphDataModule(
         data_dir=path,
-        file_names=["test_one_section_hemi.h5ad"],
+        file_names=["one_section_hemi_0926.h5ad"],
         batch_size=2,
         n_hops=2,
         cell_type="subclass",
         spatial_coords=["x_section", "y_section", "z_section"],
         d_threshold=1000,
         n_splits=5,
-        cv=-1,
+        cv=0,
         rand_seed=42,
     )
     datamodule.setup(stage="train")
@@ -549,6 +623,67 @@ def test_seed():
 
     return
 
+def mask_test():
+    import numpy as np
+
+    from gfs.data.hemisphere import PyGAnnDataGraphDataModule
+    from gfs.utils import get_paths
+
+    path = get_paths()["data_root"]
+    datamodule = PyGAnnDataGraphDataModule(
+        data_dir=path,
+        file_names=["train.h5ad"],
+        batch_size=2,
+        n_hops=2,
+        cell_type="subclass",
+        spatial_coords=["x_section", "y_section", "z_section"],
+        d_threshold=1000,
+        n_splits=5,
+        cv=-1,
+        rand_seed=42,
+    )
+    datamodule.setup(stage="train")
+
+    # datamodule.data.train_mask
+
+    dataloader = iter(datamodule.train_dataloader())
+    sum_nodes = 0
+    train_nodes = []
+    for i, batch in enumerate(dataloader):
+        train_nodes = train_nodes + batch.n_id[batch.train_mask].tolist()
+
+    datamodule2 = PyGAnnDataGraphDataModule(
+        data_dir=path,
+        file_names=["train.h5ad"],
+        batch_size=2,
+        n_hops=2,
+        cell_type="subclass",
+        spatial_coords=["x_section", "y_section", "z_section"],
+        d_threshold=1000,
+        n_splits=5,
+        cv=-1,
+        rand_seed=42,
+    )
+    datamodule2.setup(stage="val")
+
+    # datamodule.data.train_mask
+
+    dataloader2 = iter(datamodule2.train_dataloader())
+    val_nodes = []
+    for i, batch in enumerate(dataloader2):
+        val_nodes = val_nodes + batch.n_id[batch.val_mask].tolist()
+    
+    
+    set1 = set(train_nodes)
+    set2 = set(val_nodes)
+
+    # Check for intersection
+    if set1.intersection(set2):
+        print("Overlap exists.")
+    else:
+        print("No overlap.")
+    return
+
 
 if __name__ == "__main__":
     # print("running pyganndata")
@@ -559,4 +694,4 @@ if __name__ == "__main__":
     # test_seed()
 
     print("test")
-    input_id_check()
+    numnodes_pyganndatagraphdatamodule_train()

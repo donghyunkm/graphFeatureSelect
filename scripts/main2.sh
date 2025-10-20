@@ -14,12 +14,11 @@
 #SBATCH --mail-user=dkim195@gsu.edu
 #SBATCH --oversubscribe
 #SBATCH --exclude=arctrdagn007
-#SBATCH --exclude=arctrdagn015
-
 
 sleep 10s
 
 export PATH=/data/users1/dkim195/miniconda3/bin:$PATH
 source /data/users1/dkim195/miniconda3/etc/profile.d/conda.sh
 conda activate /data/users1/dkim195/miniconda3/envs/gfs
-python ../gfs/trainers/antelope.py data.prefix="celltype_1001_s20_se0" model.n_select=20 model.trainmode=0 model.fs_method="persist" data.rand_seed=0
+python ../gfs/trainers/persist.py data.prefix="1maskpercell" model.mask_type=1
+sleep 30s

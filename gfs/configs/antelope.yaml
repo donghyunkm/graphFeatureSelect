@@ -3,7 +3,9 @@ expname: "default"
 data:
   name: "one_hemisphere"
   file_names:
-    - "test_one_section_hemi.h5ad"
+    - "one_section_hemi_0926.h5ad"
+  test_names:
+    - "test.h5ad"
   n_genes: 500
   n_labels: 158
   # Zhuang: data.n_genes=1122; data.n_labels=138
@@ -43,6 +45,8 @@ model:
   tautype: "exp"
   trainmode: 0
   mask_type: 0
+  loss: "ce"
+  fs_method: "persist"
 logging:
   log_dir: "logs"
   checkpoint_dir: "checkpoints"

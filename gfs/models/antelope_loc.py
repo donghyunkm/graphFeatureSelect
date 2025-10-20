@@ -6,8 +6,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GATConv, GCNConv, SAGEConv
-from torchmetrics.classification import MulticlassAccuracy, MulticlassF1Score
-
+from torchmetrics.classification import MulticlassAccuracy
+from torchmetrics.regression import MeanSquaredError
 from gfs.models.transforms import HalfHop
 
 class MLP(nn.Module):
@@ -46,45 +46,6 @@ class MLP(nn.Module):
         return self.fc[-1](x)
 
 
-class FeatureRegularizer(nn.Module):
-    def __init__(self, l1=0.1, panel_size=None, priority_score=None, pairs=None, alpha=0.5, beta=0.5, gamma=0.5, strict=True):
-        super().__init__()
-        self.l1 = 0.01 if l1 is None else l1
-        self.alpha = alpha
-        self.beta = beta
-        self.gamma = gamma
-
-        self.n_features = panel_size if panel_size else None
-        if pairs is not None:
-            self.pairs = pairs
-        else:
-            self.pairs = None
-
-        self.strict = strict
-
-    def forward(self, x):
-        abs_x = torch.abs(x)
-        reg = torch.tensor(0., dtype=x.dtype, device=x.device)
-
-        # Force weights toward 0 or 1
-        reg += torch.sum(abs_x * torch.abs(x - 1))
-
-        # Panel size constraint
-        if self.n_features is not None:
-            if self.strict:
-                reg += torch.abs(torch.sum(abs_x) - self.n_features) * self.alpha
-            else:
-                reg += torch.max(torch.sum(abs_x) - self.n_features, 0) * self.alpha
-
-        # Pairwise selection
-        if self.pairs is not None:
-            # Similar to tf.tensordot(abs_x, pairs, axes=1)
-            pair_reg = torch.matmul(abs_x, self.pairs)
-            reg += torch.sum(torch.abs(pair_reg)) * self.gamma
-
-        return self.l1 * reg
-
-
 class GnnFs(torch.nn.Module):
     """
     This model features:
@@ -107,7 +68,6 @@ class GnnFs(torch.nn.Module):
         jk (bool): if True, use skip connections
         x_res (bool): if True, use x residual connections
         gnn (str): "gat", "sage", or "gcn"
-        xyz_status (bool): if True, use xyz status
     """
 
     def __init__(
@@ -126,17 +86,11 @@ class GnnFs(torch.nn.Module):
         bn,
         jk,
         x_res,
-        gnn,
-        xyz_status,
-        fs_method
+        gnn
     ):
         super(GnnFs, self).__init__()
-        self.fs_method = fs_method
 
-        if self.fs_method == "persist":
-            self.logits = nn.Parameter(torch.randn(n_select, gene_ch))
-        elif self.fs_method == "scGist":
-            self.logits = nn.Parameter(torch.full((1, gene_ch), 0.5)) 
+        self.logits = nn.Parameter(torch.randn(n_select, gene_ch))
         self.dropout = dropout
 
         self.pre_linear = pre_linear
@@ -145,16 +99,12 @@ class GnnFs(torch.nn.Module):
         self.bn = bn
         self.jk = jk
         self.x_res = x_res
-        self.xyz_status = xyz_status
         self.gnn_layers = torch.nn.ModuleList()
         self.lins = torch.nn.ModuleList()
         self.lns = torch.nn.ModuleList()
         self.bns = torch.nn.ModuleList()
 
         self.lin_in = torch.nn.Linear(gene_ch, hid_ch)
-
-        if self.fs_method == "scGist":
-            self.feature_regularizer = FeatureRegularizer(l1=0.1, panel_size=n_select)
 
         if not self.pre_linear:
             if gnn == "gat":
@@ -188,8 +138,6 @@ class GnnFs(torch.nn.Module):
         if self.x_res:
             # self.res_lin = torch.nn.Linear(gene_ch, out_ch) old 
             self.res_lin = MLP(gene_ch, out_ch, [128, 128], nn.ReLU()) # new (from Persist)
-        if self.xyz_status:
-            self.xyz_lin = torch.nn.Linear(spatial_ch, out_ch)
 
     def reset_parameters(self):
         for layer in self.gnn_layers:
@@ -238,26 +186,12 @@ class GnnFs(torch.nn.Module):
         mask_probs = torch.gather(probs, dim=1, index=mask_indices.unsqueeze(1))
         return mask_indices, mask_probs.squeeze()
 
-    def forward(self, x, edge_index, xyz, subgraph_id, tau, hard_):
-
-        for id in subgraph_id.unique():
-            xyz_mean = torch.mean(xyz[subgraph_id == id])
-            xyz[subgraph_id == id] = xyz[subgraph_id == id] - xyz_mean
-        # print("x shape ", x.shape) x shape  torch.Size([10602, 500])
-        # print("xyz shape ", xyz.shape)
-        # print("mask ", mask.shape)
-
-        if self.fs_method == "persist":
-            mask = self.get_mask(tau, subgraph_id)
-            x = mask * x
-        if self.fs_method == "scGist":
-            x = x * self.logits
+    def forward(self, x, edge_index, subgraph_id, tau, hard_):
+        mask = self.get_mask(tau, subgraph_id)
+        x = mask * x
 
         if self.x_res:
             x_to_add = self.res_lin(x)
-        if self.xyz_status:
-            xyz = self.xyz_lin(xyz)
-
         if self.pre_linear:
             x = self.lin_in(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
@@ -285,10 +219,6 @@ class GnnFs(torch.nn.Module):
         if self.x_res:
             x = x + x_to_add
 
-        # TODO: why add here?
-        if self.xyz_status:
-            x = x + xyz
-
         return x
 
 
@@ -315,9 +245,7 @@ class LitGnnFs(L.LightningModule):
             bn=cfg.bn,
             jk=cfg.jk,
             x_res=cfg.x_res,
-            gnn=cfg.gnn,
-            xyz_status=cfg.xyz_status,
-            fs_method = cfg.fs_method
+            gnn=cfg.gnn
         )
 
         # related to training step
@@ -332,41 +260,36 @@ class LitGnnFs(L.LightningModule):
         self.trainmode = cfg.trainmode # 0 uses all training nodes; 1 uses only root nodes
 
         # losses
-        self.loss_ce = nn.CrossEntropyLoss()
+        if cfg.loss == "mse":
+            self.loss = nn.MSELoss()
+        elif cfg.loss == "mae":
+            self.loss = nn.L1Loss()
 
         # metrics
         # options = {"num_classes": cfg.out_ch, "top_k": 1, "multidim_average": "global"}
         options = {"num_classes": cfg.out_ch, "top_k": 1, "multidim_average": "global"}
 
-        self.train_overall_acc = MulticlassAccuracy(average="weighted", **options)
-        self.val_overall_acc = MulticlassAccuracy(average="weighted", **options)
+        # self.train_overall_acc = MulticlassAccuracy(average="weighted", **options)
+        # self.val_overall_acc = MulticlassAccuracy(average="weighted", **options)
 
-        self.test_overall_acc = MulticlassAccuracy(average="weighted", **options)
-        self.test_macro_acc = MulticlassAccuracy(average="macro", **options)
-        self.test_micro_acc = MulticlassAccuracy(average="micro", **options)
-        self.test_f1_overall = MulticlassF1Score(average="weighted", **options)
-        self.test_f1_macro = MulticlassF1Score(average="macro", **options)
-        self.test_f1_micro = MulticlassF1Score(average="micro", **options)
-
-        self.test_pred = []
-        self.test_labels = []
+        # self.train_overall_acc = MeanSquaredError()
+        # self.val_overall_acc = MeanSquaredError()
 
         # self.train_macro_acc = MulticlassAccuracy(average="macro", **options)
         # self.val_macro_acc = MulticlassAccuracy(average="macro", **options)
 
-    def forward(self, gene_exp, edge_index, xyz, subgraph_id, tau, hard_):
+    def forward(self, gene_exp, edge_index, subgraph_id, tau, hard_):
         """
         Args:
             gene_exp (torch.Tensor): (n_nodes, n_genes)
             edge_index (torch.Tensor): (2, n_edges)
-            xyz (torch.Tensor): (n_nodes, 3)
             subgraph_id (torch.Tensor): (n_nodes)
             tau (float): temperature for Gumbel-Softmax
             hard_ (bool): if True, use hard Gumbel-Softmax
         """
 
-        celltype = self.model(gene_exp, edge_index, xyz, subgraph_id, tau, hard_)
-        return celltype
+        loc = self.model(gene_exp, edge_index, subgraph_id, tau, hard_)
+        return loc
 
     def training_step(self, batch, batch_idx):
         # calculate losses and metrics for all training nodes in the batch.
@@ -374,37 +297,44 @@ class LitGnnFs(L.LightningModule):
         data = self.transform(batch)
 
         if self.trainmode == 0:
-            # backprop/metrics for all nodes in batch (including neighbors)
             idx = data.train_mask
         elif self.trainmode == 1:
-            # backprop/metrics for only "root" nodes, not neighbors
             idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0]
-        print("317 ", data.x.shape, len(data.gene_exp_ind))
-        celltype_pred = self.forward(
+
+        loc_pred = self.forward(
             gene_exp=data.x[:, data.gene_exp_ind],
             edge_index=data.edge_index,
-            xyz=data.x[:, data.xyz_ind],
             subgraph_id=data.subgraph_id,
             tau=tau_schedule(self.tautype, self.current_epoch, self.trainer.max_epochs),
-            hard_=False,
+            hard_=False
         )
 
         # conditionally remove "slow nodes" (from halfhop)
         if hasattr(data, "slow_node_mask"):
-            celltype_pred = celltype_pred[~data.slow_node_mask]
+            loc_pred = loc_pred[~data.slow_node_mask]
 
         # calculate loss
-        train_loss_ce = self.loss_ce(celltype_pred[idx], data.celltype[idx])
+        print("314 ", data.x.shape)
+        print("315 ", torch.max(data.xyz_ind))
+        print("316 ", idx.shape)
+# 314  torch.Size([12022, 503])
+# 315  tensor(502, device='cuda:0')
+# 316  torch.Size([3191])
 
-        if self.model.fs_method == "scGist":
-            train_loss_reg = self.model.feature_regularizer(self.model.logits) * 100
-            train_loss_ce += train_loss_reg 
 
+        # xyz = data.x[:, data.xyz_ind][idx]
+        # train_loss_x = self.loss_mse(loc_pred[idx][:,0], xyz[:,0])
+        # train_loss_y = self.loss_mse(loc_pred[idx][:,1], xyz[:,1])
+        # train_loss_z = self.loss_mse(loc_pred[idx][:,2], xyz[:,2])
+        train_loss_x = self.loss(loc_pred[idx,0], data.xyz[idx, 0])
+        train_loss_y = self.loss(loc_pred[idx,1], data.xyz[idx, 1])
+        train_loss_z = self.loss(loc_pred[idx,2], data.xyz[idx, 2])
+
+        train_loss = train_loss_x + train_loss_y + train_loss_z
         # calculate metrics
 
-        self.train_overall_acc(preds=celltype_pred[idx], target=data.celltype[idx])
+        # self.train_overall_acc(preds=torch.flatten(loc_pred[idx]), target=torch.flatten(data.xyz[idx]))
         # self.train_macro_acc(preds=celltype_pred[idx], target=data.celltype[idx])
-
 
         # log losses and metrics
         options = {
@@ -415,67 +345,62 @@ class LitGnnFs(L.LightningModule):
             "batch_size": batch_size,
         }
 
-        self.log("train_loss_ce", train_loss_ce, **options)
-        self.log("train_loss_reg", train_loss_reg, **options) if self.model.fs_method == "scGist" else None
-        self.log("train_overall_acc", self.train_overall_acc, **options)
+        self.log("train_loss", train_loss, **options)
+        # self.log("train_overall_acc", self.train_overall_acc, **options)
         # self.log("train_macro_acc", self.train_macro_acc, **options)
         self.log("tau", tau_schedule(self.tautype, self.current_epoch, self.trainer.max_epochs), **options)
-        return train_loss_ce
+        return train_loss
 
     def on_train_epoch_end(self):
         # log gene selections and probabilities at the end of each epoch
-        if self.model.fs_method == "persist":
-            mask_indices, mask_probs = self.model.get_mask_indices()
-            metrics = {"epoch": self.current_epoch}
+        mask_indices, mask_probs = self.model.get_mask_indices()
+        metrics = {"epoch": self.current_epoch}
 
-            for i in range(mask_indices.size(0)):
-                metrics[f"sel_{i}"] = mask_indices[i].item()
+        for i in range(mask_indices.size(0)):
+            metrics[f"sel_{i}"] = mask_indices[i].item()
 
-            for i in range(mask_indices.size(0)):
-                metrics[f"prob_{i}"] = mask_probs[i].item()
+        for i in range(mask_indices.size(0)):
+            metrics[f"prob_{i}"] = mask_probs[i].item()
 
-            # get filepath of logger
-            path = self.logger._root_dir + "/selections.csv"
-            file_exists = os.path.isfile(path)
-            with open(path, "a", newline="") as f:
-                writer = csv.writer(f)
-                if not file_exists:
-                    writer.writerow(metrics.keys())
-                writer.writerow([v for v in metrics.values()])
-            return
+        # get filepath of logger
+        path = self.logger._root_dir + "/selections.csv"
+        file_exists = os.path.isfile(path)
+        with open(path, "a", newline="") as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(metrics.keys())
+            writer.writerow([v for v in metrics.values()])
+        return
 
     def validation_step(self, batch, batch_idx):
         # calculate losses and metrics for all nodes in the batch.
 
         batch_size = batch.input_id.size(0)
-        idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0] 
-        # metrics calculated for only "root" nodes, not neighbors
+        idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0]
 
         # halfhop or pass-through
         data = self.transform(batch)
-        # print("385 ", data.x.shape, len(data.gene_exp_ind)) 385  torch.Size([10602, 503]) 500
 
-        celltype_pred = self.forward(
+        loc_pred = self.forward(
             gene_exp=data.x[:, data.gene_exp_ind],
             edge_index=data.edge_index,
-            xyz=data.x[:, data.xyz_ind],
             subgraph_id=data.subgraph_id,
             tau=tau_schedule(self.tautype, self.current_epoch, self.trainer.max_epochs),
-            hard_=True,
+            hard_=True
         )
 
         # conditionally remove "slow nodes" (from halfhop)
         if hasattr(data, "slow_node_mask"):
-            celltype_pred = celltype_pred[~data.slow_node_mask]
+            loc_pred = loc_pred[~data.slow_node_mask]
 
         # calculate losses and metrics
-        val_loss_ce = self.loss_ce(celltype_pred[idx], batch.celltype[idx])
-        if self.model.fs_method == "scGist":
-            val_loss_reg = self.model.feature_regularizer(self.model.logits)
-            val_loss_ce += val_loss_reg 
+        # print("382 ", data.x[:, data.xyz_ind].shape) # torch.Size([11437, 3])
+        val_loss_x = self.loss(loc_pred[idx,0], data.xyz[idx, 0])
+        val_loss_y = self.loss(loc_pred[idx,1], data.xyz[idx, 1])
+        val_loss_z = self.loss(loc_pred[idx,2], data.xyz[idx, 2])
+        val_loss = val_loss_x + val_loss_y + val_loss_z
 
-
-        self.val_overall_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
+        # self.val_overall_acc(preds=torch.flatten(loc_pred[idx]), target=torch.flatten(data.xyz[idx]))
         # self.val_macro_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
 
         # log losses and metrics
@@ -487,9 +412,8 @@ class LitGnnFs(L.LightningModule):
             "batch_size": batch_size,
         }
 
-        self.log("val_loss_ce", val_loss_ce, **options)
-        self.log("val_loss_reg", val_loss_reg, **options) if self.model.fs_method == "scGist" else None
-        self.log("val_overall_acc", self.val_overall_acc, **options)
+        self.log("val_loss", val_loss, **options)
+        # self.log("val_overall_acc", self.val_overall_acc, **options)
         # self.log("val_macro_acc", self.val_macro_acc, **options)
 
     def on_validation_epoch_end(self):
@@ -504,96 +428,22 @@ class LitGnnFs(L.LightningModule):
         # halfhop or pass-through
         data = self.transform(batch)
 
-        celltype_pred = self.forward(
+        loc_pred = self.forward(
             gene_exp=data.x[:, data.gene_exp_ind],
             edge_index=data.edge_index,
-            xyz=data.x[:, data.xyz_ind],
             subgraph_id=data.subgraph_id,
             tau=tau_schedule(self.tautype, self.current_epoch, self.trainer.max_epochs),
-            hard_=True,
+            hard_=True
         )
 
         # conditionally remove "slow nodes" (from halfhop)
         if hasattr(data, "slow_node_mask"):
-            celltype_pred = celltype_pred[~data.slow_node_mask]
+            loc_pred = loc_pred[~data.slow_node_mask]
 
-        return [celltype_pred[idx], batch.celltype[idx]]
+        return [loc_pred[idx], data.x[:, data.xyz_ind]]
 
     def on_predict_epoch_end(self):
         pass
-
-    def test_step(self, batch, batch_idx):
-        # calculate losses and metrics for all nodes in the batch.
-
-        batch_size = batch.input_id.size(0)
-        idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0] 
-        # metrics calculated for only "root" nodes, not neighbors
-
-        # halfhop or pass-through
-        data = self.transform(batch)
-
-        celltype_pred = self.forward(
-            gene_exp=data.x[:, data.gene_exp_ind],
-            edge_index=data.edge_index,
-            xyz=data.x[:, data.xyz_ind],
-            subgraph_id=data.subgraph_id,
-            tau=tau_schedule(self.tautype, self.current_epoch, self.trainer.max_epochs),
-            hard_=True,
-        )
-
-        # conditionally remove "slow nodes" (from halfhop)
-        if hasattr(data, "slow_node_mask"):
-            celltype_pred = celltype_pred[~data.slow_node_mask]
-
-        # calculate losses and metrics
-        test_loss_ce = self.loss_ce(celltype_pred[idx], batch.celltype[idx])
-        self.test_overall_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
-        self.test_macro_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
-        self.test_micro_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
-
-        self.test_f1_overall(preds=celltype_pred[idx], target=batch.celltype[idx])
-        self.test_f1_macro(preds=celltype_pred[idx], target=batch.celltype[idx])
-        self.test_f1_micro(preds=celltype_pred[idx], target=batch.celltype[idx])
-
-        # log losses and metrics
-        options = {
-            "on_step": self.hparams.logging.on_step,
-            "on_epoch": self.hparams.logging.on_epoch,
-            "prog_bar": self.hparams.logging.prog_bar,
-            "logger": self.hparams.logging.logger,
-            "batch_size": batch_size,
-        }
-
-        self.log("test_loss_ce", test_loss_ce, **options)
-        self.log("test_overall_acc", self.test_overall_acc, **options)
-        self.log("test_macro_acc", self.test_macro_acc, **options)
-        self.log("test_micro_acc", self.test_micro_acc, **options)
-
-        self.log("test_f1_overall", self.test_f1_overall, **options)
-        self.log("test_f1_macro", self.test_f1_macro, **options)
-        self.log("test_f1_micro", self.test_f1_micro, **options)
-        self.test_pred.append(celltype_pred[idx])
-        self.test_labels.append(batch.celltype[idx])
-        # self.log("val_macro_acc", self.val_macro_acc, **options)
-
-    def on_test_epoch_end(self):
-        all_predictions = []
-        all_labels = []
-
-        for i in range(len(self.test_pred)):
-            all_predictions.append(self.test_pred[i])
-            all_labels.append(self.test_labels[i])
-
-        # Concatenate all predictions and labels
-        all_predictions = torch.cat(all_predictions)
-        all_labels = torch.cat(all_labels)
-
-        # Now you can save these tensors to a file
-        # For example, saving to a .pt file
-        path = self.logger._root_dir + "/test_pred.pt"
-        torch.save({"predictions": all_predictions, "labels": all_labels}, path)
-
-
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.trainer.lr)
