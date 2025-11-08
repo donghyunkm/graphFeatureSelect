@@ -175,20 +175,20 @@ class PyGAnnData:
         test_mask[self.test_ind] = True
 
         print("146 ", self.paths, self.paths[0])
-        if self.cv < 0:
-            train_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec/train_mask.pt')
-            val_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec/val_mask.pt')
-            test_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec/test_mask.pt')
-            # if "test_one_section_hemi.h5ad" in self.paths[0]:
-            #     print("AAA")
-            #     train_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_visp/train_mask.pt')
-            #     val_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_visp/val_mask.pt')
-            #     print(train_mask.shape, train_mask) # torch.Size([57917]) tensor([True, True, True,  ..., True, True, True])
-            # elif  "Zhuang-ABCA-1-section80.h5ad" in self.paths[0]:
-            #     print("BBB")
-            #     train_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_zhuang/train_mask.pt')
-            #     val_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_zhuang/val_mask.pt')
-            print("CCC")
+        # if self.cv < 0: for normal model
+        #     train_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec/train_mask.pt')
+        #     val_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec/val_mask.pt')
+        #     test_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec/test_mask.pt')
+
+        if self.cv < 0: #for top10 subclass only
+            print("CV < 0")
+            # train_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec_top10/train_mask_top10.pt')
+            # val_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec_top10/val_mask_top10.pt')
+            # test_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec_top10/test_mask_top10.pt')
+            train_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec_top10_1106/train_mask_top10.pt')
+            val_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec_top10_1106/val_mask_top10.pt')
+            test_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec_top10_1106/test_mask_top10.pt')
+
         x = torch.cat([gene_exp, xyz], dim=1)
         gene_exp_ind = torch.arange(gene_exp.shape[1])
         xyz_ind = torch.arange(gene_exp.shape[1], gene_exp.shape[1] + xyz.shape[1])
@@ -435,7 +435,7 @@ def numnodes_pyganndatagraphdatamodule_train():
     path = get_paths()["data_root"]
     datamodule = PyGAnnDataGraphDataModule(
         data_dir=path,
-        file_names=["one_section_hemi_0926.h5ad"],
+        file_names=["one_section_hemi_top10_1105.h5ad"],
         batch_size=2,
         n_hops=2,
         cell_type="subclass",

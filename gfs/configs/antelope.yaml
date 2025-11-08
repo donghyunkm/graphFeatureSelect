@@ -3,7 +3,7 @@ expname: "default"
 data:
   name: "one_hemisphere"
   file_names:
-    - "one_section_hemi_0926.h5ad"
+    - "one_section_hemi_top10_1106.h5ad"
   test_names:
     - "test.h5ad"
   n_genes: 500

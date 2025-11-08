@@ -351,8 +351,8 @@ class LitGnnFs(L.LightningModule):
         self.test_pred = []
         self.test_labels = []
 
-        # self.train_macro_acc = MulticlassAccuracy(average="macro", **options)
-        # self.val_macro_acc = MulticlassAccuracy(average="macro", **options)
+        self.train_macro_acc = MulticlassAccuracy(average="macro", **options)
+        self.val_macro_acc = MulticlassAccuracy(average="macro", **options)
 
     def forward(self, gene_exp, edge_index, xyz, subgraph_id, tau, hard_):
         """
@@ -403,7 +403,7 @@ class LitGnnFs(L.LightningModule):
         # calculate metrics
 
         self.train_overall_acc(preds=celltype_pred[idx], target=data.celltype[idx])
-        # self.train_macro_acc(preds=celltype_pred[idx], target=data.celltype[idx])
+        self.train_macro_acc(preds=celltype_pred[idx], target=data.celltype[idx])
 
 
         # log losses and metrics
@@ -418,7 +418,7 @@ class LitGnnFs(L.LightningModule):
         self.log("train_loss_ce", train_loss_ce, **options)
         self.log("train_loss_reg", train_loss_reg, **options) if self.model.fs_method == "scGist" else None
         self.log("train_overall_acc", self.train_overall_acc, **options)
-        # self.log("train_macro_acc", self.train_macro_acc, **options)
+        self.log("train_macro_acc", self.train_macro_acc, **options)
         self.log("tau", tau_schedule(self.tautype, self.current_epoch, self.trainer.max_epochs), **options)
         return train_loss_ce
 
@@ -475,8 +475,10 @@ class LitGnnFs(L.LightningModule):
             val_loss_ce += val_loss_reg 
 
 
-        self.val_overall_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
-        # self.val_macro_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
+        self.val_overall_acc(preds=celltype_pred[idx], target=batch.celltype[idx]) # original
+
+
+        self.val_macro_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
 
         # log losses and metrics
         options = {
@@ -490,7 +492,7 @@ class LitGnnFs(L.LightningModule):
         self.log("val_loss_ce", val_loss_ce, **options)
         self.log("val_loss_reg", val_loss_reg, **options) if self.model.fs_method == "scGist" else None
         self.log("val_overall_acc", self.val_overall_acc, **options)
-        # self.log("val_macro_acc", self.val_macro_acc, **options)
+        self.log("val_macro_acc", self.val_macro_acc, **options)
 
     def on_validation_epoch_end(self):
         pass
@@ -574,7 +576,6 @@ class LitGnnFs(L.LightningModule):
         self.log("test_f1_micro", self.test_f1_micro, **options)
         self.test_pred.append(celltype_pred[idx])
         self.test_labels.append(batch.celltype[idx])
-        # self.log("val_macro_acc", self.val_macro_acc, **options)
 
     def on_test_epoch_end(self):
         all_predictions = []
