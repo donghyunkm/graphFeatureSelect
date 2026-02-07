@@ -3,7 +3,7 @@ expname: "default"
 data:
   name: "one_hemisphere"
   file_names:
-    - "one_section_hemi_top10_1106.h5ad"
+    - "one_section_hemi_0926.h5ad"
   test_names:
     - "test.h5ad"
   n_genes: 500
@@ -24,12 +24,12 @@ data:
   rand_seed: 42
   prefix: "test"
 model:
-  name: "antelope"
+  name: "antelope_topk"
   gene_ch: ${data.n_genes}
   spatial_ch: 3 # should match length of spatial_coords
   hid_ch: 32
   out_ch: ${data.n_labels}
-  n_select: 20
+  n_select: 10
   local_layers: 2
   dropout: 0.5
   heads: 1
@@ -46,7 +46,7 @@ model:
   trainmode: 0
   mask_type: 0
   loss: "ce"
-  fs_method: "persist"
+  fs_method: "topk"
   focal_loss: true
 logging:
   log_dir: "logs"
@@ -66,3 +66,18 @@ trainer:
 hydra:
   run:
     dir: "../../data/hydralogs/"
+
+topk:
+  k: 10
+  instancewise: False
+  reconstruction: False
+  dataset: mnist
+  sampler: imle
+  num_samples: 1
+  noise_scale: 1.0
+  beta: 1.0
+  tau: 0.1
+  pps_sample: pareto
+  pps_activation: sigmoid_topk
+  pps_gradient: straight_through
+  device: cuda

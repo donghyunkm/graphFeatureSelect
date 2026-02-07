@@ -175,19 +175,16 @@ class PyGAnnData:
         test_mask[self.test_ind] = True
 
         print("146 ", self.paths, self.paths[0])
-        # if self.cv < 0: for normal model
-        #     train_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec/train_mask.pt')
-        #     val_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec/val_mask.pt')
-        #     test_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec/test_mask.pt')
+        if self.cv < 0: # for normal model
+            train_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec/train_mask.pt')
+            val_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec/val_mask.pt')
+            test_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec/test_mask.pt')
 
-        if self.cv < 0: #for top10 subclass only
-            print("CV < 0")
-            # train_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec_top10/train_mask_top10.pt')
-            # val_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec_top10/val_mask_top10.pt')
-            # test_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec_top10/test_mask_top10.pt')
-            train_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec_top10_1106/train_mask_top10.pt')
-            val_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec_top10_1106/val_mask_top10.pt')
-            test_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec_top10_1106/test_mask_top10.pt')
+        # if self.cv < 0: #for top10 subclass only
+        #     print("CV < 0")
+        #     train_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec_top10_1106/train_mask_top10.pt')
+        #     val_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec_top10_1106/val_mask_top10.pt')
+        #     test_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec_top10_1106/test_mask_top10.pt')
 
         x = torch.cat([gene_exp, xyz], dim=1)
         gene_exp_ind = torch.arange(gene_exp.shape[1])
@@ -289,18 +286,18 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
         )
         self.data = self.dataset.get_pygdata_obj()
 
-        self.dataset_test = PyGAnnData(
-            self.test_paths,
-            spatial_coords=self.spatial_coords,
-            cell_type=self.cell_type,
-            self_loops_only=self.self_loops_only,
-            d_threshold=self.d_threshold,
-            n_splits=self.n_splits,
-            cv=self.cv,
-            rand_seed=self.rand_seed,
-            test_data=True
-        )
-        self.data_test = self.dataset_test.get_pygdata_obj()
+        # self.dataset_test = PyGAnnData(
+        #     self.test_paths,
+        #     spatial_coords=self.spatial_coords,
+        #     cell_type=self.cell_type,
+        #     self_loops_only=self.self_loops_only,
+        #     d_threshold=self.d_threshold,
+        #     n_splits=self.n_splits,
+        #     cv=self.cv,
+        #     rand_seed=self.rand_seed,
+        #     test_data=True
+        # )
+        # self.data_test = self.dataset_test.get_pygdata_obj()
 
 
     def train_dataloader(self):

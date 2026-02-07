@@ -10,6 +10,68 @@ from torchmetrics.classification import MulticlassAccuracy, MulticlassF1Score
 from torchvision.ops import sigmoid_focal_loss
 
 from gfs.models.transforms import HalfHop
+from gfs.models.get_sampler import SamplerArgs, get_sampler
+from gfs.models.samplers.sfess.sfess import score_function_estimator
+
+from functools import partial
+
+
+class SubsetLayer(nn.Module):
+
+    def __init__(self, subset_layer, k, num_samples):
+        super(SubsetLayer, self).__init__()
+        self.subset = subset_layer
+        self.k = k
+        self.num_samples = num_samples
+
+    def forward(self, logits, tau):
+        if self.training:
+            res = self.subset(logits, tau)
+            return res
+        else:
+            indices = torch.topk(logits.squeeze(-1), self.k, dim=1)[1]
+            khot = F.one_hot(indices, logits.size(1)).sum(1).float()
+            khot = khot.unsqueeze(0).unsqueeze(-1).expand(self.num_samples, -1, -1, -1)
+            return khot, None
+
+
+def get_subset_layer(k, args):
+    name = {
+        "sfess": "sfess",
+        "sfess-v": "sfess",
+        "gumbel": "gumbel",
+        "st-gumbel": "gumbel",
+        "simple": "simple",
+        "imle": "imle",
+        "pps": "pps",
+    }[args.sampler]
+    sampler_args = SamplerArgs(
+        name=name,
+        sample_k=k,
+        n_samples=args.num_samples,
+        noise_scale=args.noise_scale,
+        beta=args.beta,
+        tau=args.tau,
+        hard=args.sampler != "gumbel",
+        pps_gradient=args.pps_gradient,
+        pps_activation=args.pps_activation,
+        pps_sample=args.pps_sample,
+    )
+    sampler = get_sampler(sampler_args, device=args.device)
+    subset_layer = SubsetLayer(sampler, k, args.num_samples)
+    return subset_layer
+
+def get_sfe(args):
+    estimator = {
+        "sfess": "reinforce",
+        "sfess-v": "vimco",
+        "gumbel": None,
+        "st-gumbel": None,
+        "simple": None,
+        "imle": None,
+        "pps": None,
+    }[args.sampler]
+    return partial(score_function_estimator, estimator=estimator)
 
 class MLP(nn.Module):
     '''
@@ -130,7 +192,10 @@ class GnnFs(torch.nn.Module):
         gnn,
         xyz_status,
         fs_method,
-        focal_loss
+        focal_loss,
+        k,
+        num_samples,
+        cfg_topk
     ):
         super(GnnFs, self).__init__()
         self.fs_method = fs_method
@@ -139,6 +204,8 @@ class GnnFs(torch.nn.Module):
             self.logits = nn.Parameter(torch.randn(n_select, gene_ch))
         elif self.fs_method == "scGist":
             self.logits = nn.Parameter(torch.full((1, gene_ch), 0.5)) 
+        elif self.fs_method == "topk":
+            self.logits = nn.Parameter(torch.randn(gene_ch))
         self.dropout = dropout
 
         self.pre_linear = pre_linear
@@ -152,7 +219,10 @@ class GnnFs(torch.nn.Module):
         self.lins = torch.nn.ModuleList()
         self.lns = torch.nn.ModuleList()
         self.bns = torch.nn.ModuleList()
-
+        self.k = k
+        self.num_samples = num_samples
+        self.cfg_topk = cfg_topk
+        self.extra = None
         self.lin_in = torch.nn.Linear(gene_ch, hid_ch)
         self.focal_loss = focal_loss
         if self.fs_method == "scGist":
@@ -193,6 +263,9 @@ class GnnFs(torch.nn.Module):
         if self.xyz_status:
             self.xyz_lin = torch.nn.Linear(spatial_ch, out_ch)
 
+        self.subset_layer = get_subset_layer(self.k, self.cfg_topk)
+
+
     def reset_parameters(self):
         for layer in self.gnn_layers:
             layer.reset_parameters()
@@ -208,6 +281,46 @@ class GnnFs(torch.nn.Module):
         self.xyz_lin.reset_parameters()
         self.logits.reset_parameters()
 
+    def sample_mask(self, logits, batch, subgraph_id, tau):
+        if logits.dim() == 1:
+            logits = logits.expand(batch, -1)
+
+
+        if self.training:
+            n_subgraphs = subgraph_id.max() + 1
+            mask_list = []
+            for i in range(n_subgraphs):
+                mask, extra = self.subset_layer(logits.unsqueeze(-1), tau)
+                mask = mask.squeeze(-1)
+                # print("MASK295295 ", mask.shape) MASK295295  torch.Size([1, 1, 500])
+                # print("MASK295HARD ", mask) 10 1s,490 0s when hard sampling is used
+                mask_list.append(mask)
+                self.extra = extra #??
+
+            subgraph_id = subgraph_id.tolist()
+            # return_mask = mask_list[subgraph_id]
+            return_mask = [mask_list[i] for i in subgraph_id]
+            return_mask = torch.stack(return_mask)
+            return_mask = return_mask.squeeze()
+            return return_mask
+        else:
+            indices = torch.topk(logits, self.k, dim=-1)[1] 
+            mask = F.one_hot(indices, logits.size(-1)).sum(1)
+            mask = mask.float()
+            mask = mask.expand(self.num_samples, -1, -1)
+            mask = mask.squeeze()
+            return mask
+
+# SAMPLEMAASK
+# torch.Size([500]) 1
+# logits2  torch.Size([1, 500])
+# MASKVAL  torch.Size([1, 1, 500])
+
+# SAMPLEMAASK
+# torch.Size([500]) 1
+# logits2  torch.Size([1, 500])
+# MASKTRAIN  torch.Size([1, 1, 500])
+
     def get_mask(self, tau, subgraph_id):
         """
         Get soft k-hot mask
@@ -217,12 +330,10 @@ class GnnFs(torch.nn.Module):
             # extra samples are harmless, makes indexing more straightforward;
             # case: e.g. subgraph_id.unique() = [0, 2, 3, 4]
             n_subgraphs = subgraph_id.max() + 1
-            # sample has dims (n_selections, n_subgraphs, n_features) --> chooses 1 gene for each of n_selections
+            # sample has dims (n_selections, n_subgraphs, n_features)
             sample = F.gumbel_softmax(self.logits.unsqueeze(1).repeat(1, n_subgraphs, 1), tau=tau, hard=False, dim=-1)
-            print("SAMPLE ", sample.shape)
-            # k_hot has dims (n_subgraphs, n_features) --> uses max operation to combine/sum the n_selections into 1 dimension 
+            # k_hot has dims (n_subgraphs, n_features)
             k_hot = torch.max(sample, dim=0).values
-            print("KHOT ", k_hot.shape)
             # repeat k-hot masks for each node based on their subgraph membership
             return k_hot[subgraph_id]
         else:
@@ -247,16 +358,13 @@ class GnnFs(torch.nn.Module):
         for id in subgraph_id.unique():
             xyz_mean = torch.mean(xyz[subgraph_id == id])
             xyz[subgraph_id == id] = xyz[subgraph_id == id] - xyz_mean
-        # print("x shape ", x.shape) x shape  torch.Size([10602, 500])
-        # print("xyz shape ", xyz.shape)
-        # print("mask ", mask.shape)
 
-        if self.fs_method == "persist":
-            mask = self.get_mask(tau, subgraph_id)
-            # print("254persist ", mask.shape, x.shape) #254persist  torch.Size([16418, 500]) torch.Size([16418, 500])
-            x = mask * x
-        if self.fs_method == "scGist":
-            x = x * self.logits
+        mask = self.sample_mask(self.logits, 1, subgraph_id, tau)
+        print("361XX ", x.shape)
+        print("MASK361 ", mask)
+
+        x = mask * x
+        x = torch.squeeze(x)
 
         if self.x_res:
             x_to_add = self.res_lin(x)
@@ -305,6 +413,7 @@ class LitGnnFs(L.LightningModule):
 
         # model
         cfg = self.hparams.model
+        cfg_topk = self.hparams.topk
         self.model = GnnFs(
             gene_ch=cfg.gene_ch,
             spatial_ch=cfg.spatial_ch,
@@ -323,7 +432,10 @@ class LitGnnFs(L.LightningModule):
             gnn=cfg.gnn,
             xyz_status=cfg.xyz_status,
             fs_method = cfg.fs_method,
-            focal_loss = cfg.focal_loss
+            focal_loss = cfg.focal_loss,
+            k = cfg_topk.k,
+            num_samples = cfg_topk.num_samples,
+            cfg_topk = cfg_topk
         )
 
         # related to training step
@@ -337,6 +449,10 @@ class LitGnnFs(L.LightningModule):
 
         self.trainmode = cfg.trainmode # 0 uses all training nodes; 1 uses only root nodes
 
+        
+        self.sfe = get_sfe(cfg_topk)
+        
+        self.k = cfg_topk.k
         # losses
         self.loss_ce = nn.CrossEntropyLoss()
 
@@ -385,7 +501,6 @@ class LitGnnFs(L.LightningModule):
         elif self.trainmode == 1:
             # backprop/metrics for only "root" nodes, not neighbors
             idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0]
-        print("317 ", data.x.shape, len(data.gene_exp_ind))
         celltype_pred = self.forward(
             gene_exp=data.x[:, data.gene_exp_ind],
             edge_index=data.edge_index,
@@ -415,6 +530,10 @@ class LitGnnFs(L.LightningModule):
         if self.model.fs_method == "scGist":
             train_loss_reg = self.model.feature_regularizer(self.model.logits) * 100
             train_loss_ce += train_loss_reg 
+
+        train_loss_ce = train_loss_ce.unsqueeze(0)
+        train_loss_ce = self.sfe(train_loss_ce, self.model.extra) # only methods that require score function estimates return something for .extra
+        train_loss_ce = train_loss_ce.squeeze()
 
         # calculate metrics
 
@@ -469,7 +588,6 @@ class LitGnnFs(L.LightningModule):
 
         # halfhop or pass-through
         data = self.transform(batch)
-        # print("385 ", data.x.shape, len(data.gene_exp_ind)) 385  torch.Size([10602, 503]) 500
 
         celltype_pred = self.forward(
             gene_exp=data.x[:, data.gene_exp_ind],
