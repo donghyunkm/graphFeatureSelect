@@ -47,7 +47,7 @@ model:
   mask_type: 0
   loss: "ce"
   fs_method: "topk"
-  focal_loss: true
+  focal_loss: false
 logging:
   log_dir: "logs"
   checkpoint_dir: "checkpoints"
@@ -68,11 +68,11 @@ hydra:
     dir: "../../data/hydralogs/"
 
 topk:
-  k: 10
+  k: ${model.n_select}
   instancewise: False
   reconstruction: False
   dataset: mnist
-  sampler: imle
+  sampler: pps
   num_samples: 1
   noise_scale: 1.0
   beta: 1.0
@@ -81,3 +81,4 @@ topk:
   pps_activation: sigmoid_topk
   pps_gradient: straight_through
   device: cuda
+  subgraph: True

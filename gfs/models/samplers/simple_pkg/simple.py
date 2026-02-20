@@ -12,7 +12,6 @@ from gfs.models.samplers.simple_pkg.create_simple_constraint import create_and_s
 DISABLE = False
 MODE = "default"
 
-
 @torch.compile(fullgraph=True, mode=MODE, disable=DISABLE)
 def levelwiseSL(
     levels: List[torch.Tensor],

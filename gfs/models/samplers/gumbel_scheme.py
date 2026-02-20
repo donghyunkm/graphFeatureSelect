@@ -2,7 +2,6 @@ import torch
 import numpy as np
 from gfs.models.samplers.deterministic_scheme import select_from_candidates
 
-
 EPSILON = np.finfo(np.float32).tiny
 LARGE_NUMBER = 1.0e10
 
@@ -12,10 +11,10 @@ class GumbelSampler(torch.nn.Module):
         super(GumbelSampler, self).__init__()
         self.k = k
         self.hard = hard
-        self.tau_init = tau
+        self.tau = tau
         self.n_samples = n_samples
 
-    def forward(self, scores, tau):
+    def forward(self, scores):
         nnodes, choices, ensemble = scores.shape
         local_k = min(self.k, choices)
         flat_scores = scores.permute((0, 2, 1)).reshape(nnodes * ensemble, choices)
@@ -38,7 +37,7 @@ class GumbelSampler(torch.nn.Module):
                 1.0 - onehot_approx, torch.tensor([EPSILON], device=flat_scores.device)
             )
             flat_scores = flat_scores + torch.log(khot_mask)
-            onehot_approx = torch.nn.functional.softmax(flat_scores / tau, dim=1)
+            onehot_approx = torch.nn.functional.softmax(flat_scores / self.tau, dim=1)
             khot = khot + onehot_approx
 
         if self.hard:
@@ -62,9 +61,3 @@ class GumbelSampler(torch.nn.Module):
             return mask[None], None
         else:
             return self.forward(scores)
-
-if __name__ == "__main__":
-    gumbel = GumbelSampler(k=5, n_samples=2, hard=True)
-    logits = torch.randn(1, 10,5) 
-    mask = gumbel(logits)
-    print(mask)

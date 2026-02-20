@@ -5,7 +5,7 @@ import lightning as L
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GATConv, GCNConv, SAGEConv
+from torch_geometric.nn import GATConv, GCNConv, SAGEConv, GATv2Conv
 from torchmetrics.classification import MulticlassAccuracy, MulticlassF1Score
 from torchvision.ops import sigmoid_focal_loss
 
@@ -24,9 +24,9 @@ class SubsetLayer(nn.Module):
         self.k = k
         self.num_samples = num_samples
 
-    def forward(self, logits, tau):
+    def forward(self, logits):
         if self.training:
-            res = self.subset(logits, tau)
+            res = self.subset(logits)
             return res
         else:
             indices = torch.topk(logits.squeeze(-1), self.k, dim=1)[1]
@@ -51,7 +51,6 @@ def get_subset_layer(k, args):
         n_samples=args.num_samples,
         noise_scale=args.noise_scale,
         beta=args.beta,
-        tau=args.tau,
         hard=args.sampler != "gumbel",
         pps_gradient=args.pps_gradient,
         pps_activation=args.pps_activation,
@@ -231,7 +230,7 @@ class GnnFs(torch.nn.Module):
         if not self.pre_linear:
             if gnn == "gat":
                 self.gnn_layers.append(
-                    GATConv(gene_ch, hid_ch, heads=heads, concat=False, add_self_loops=False, bias=False)
+                    GATv2Conv(gene_ch, hid_ch, heads=heads, concat=False, add_self_loops=False, bias=False)
                 )
             elif gnn == "sage":
                 self.gnn_layers.append(SAGEConv(gene_ch, hid_ch))
@@ -245,7 +244,7 @@ class GnnFs(torch.nn.Module):
         for _ in range(local_layers):
             if gnn == "gat":
                 self.gnn_layers.append(
-                    GATConv(hid_ch, hid_ch, heads=heads, concat=False, add_self_loops=False, bias=False)
+                    GATv2Conv(hid_ch, hid_ch, heads=heads, concat=False, add_self_loops=False, bias=False)
                 )
             elif gnn == "sage":
                 self.gnn_layers.append(SAGEConv(hid_ch, hid_ch))
@@ -291,7 +290,7 @@ class GnnFs(torch.nn.Module):
                 n_subgraphs = subgraph_id.max() + 1
                 mask_list = []
                 for i in range(n_subgraphs):
-                    mask, extra = self.subset_layer(logits.unsqueeze(-1), tau)
+                    mask, extra = self.subset_layer(logits.unsqueeze(-1) / tau) # divide logits by tau to anneal temperature
                     mask = mask.squeeze(-1)
                     # print("MASK295295 ", mask.shape) MASK295295  torch.Size([1, 1, 500])
                     # print("MASK295HARD ", mask) 10 1s,490 0s when hard sampling is used
@@ -302,15 +301,17 @@ class GnnFs(torch.nn.Module):
                 # return_mask = mask_list[subgraph_id]
                 return_mask = [mask_list[i] for i in subgraph_id]
                 return_mask = torch.stack(return_mask)
-                return_mask = return_mask.squeeze()
+                # return_mask = return_mask.squeeze()
                 return return_mask
             else:
-                mask, extra = self.subset_layer(logits.unsqueeze(-1), tau)
+                mask, extra = self.subset_layer(logits.unsqueeze(-1) / tau) # divide logits by tau to anneal temperature
+
                 # print("MASK295295 ", mask.shape) MASK295295  torch.Size([1, 1, 500])
                 # print("MASK295HARD ", mask) 10 1s,490 0s when hard sampling is used
                 self.extra = extra #??
                 # print("EXTRA? ", self.extra)
-                mask = mask.squeeze()
+                print("train ", mask.shape)
+                # mask = mask.squeeze()
                 # print("trainmask ", mask.shape)
                 return mask
 
@@ -319,7 +320,8 @@ class GnnFs(torch.nn.Module):
             mask = F.one_hot(indices, logits.size(-1)).sum(1)
             mask = mask.float()
             mask = mask.expand(self.num_samples, -1, -1)
-            mask = mask.squeeze()
+            print("test ", mask.shape)
+            # mask = mask.squeeze()
             return mask
 
 # SAMPLEMAASK
@@ -370,12 +372,6 @@ class GnnFs(torch.nn.Module):
             xyz_mean = torch.mean(xyz[subgraph_id == id])
             xyz[subgraph_id == id] = xyz[subgraph_id == id] - xyz_mean
 
-        mask = self.sample_mask(self.logits, 1, subgraph_id, tau)
-        # print("361XX ", x.shape)
-        # print("MASK361 ", mask)
-
-        x = mask * x
-        x = torch.squeeze(x)
 
         if self.x_res:
             x_to_add = self.res_lin(x)
@@ -457,7 +453,7 @@ class LitGnnFs(L.LightningModule):
             self.transform = lambda x: x
 
         self.tautype = cfg.tautype
-
+        self.num_samples = cfg_topk.num_samples
         self.trainmode = cfg.trainmode # 0 uses all training nodes; 1 uses only root nodes
 
         
@@ -498,20 +494,32 @@ class LitGnnFs(L.LightningModule):
             hard_ (bool): if True, use hard Gumbel-Softmax
         """
 
-        celltype = self.model(gene_exp, edge_index, xyz, subgraph_id, tau, hard_)
-        return celltype
+        mask = self.model.sample_mask(self.model.logits, 1, subgraph_id, tau)
+        
+        print("forward ", mask.shape, gene_exp.shape) #forward  torch.Size([5, 1, 500]) torch.Size([14769, 500])
+        gene_exp = mask * gene_exp
+        print("after ", gene_exp.shape) #after  torch.Size([5, 14769, 500])
+        celltypes = []
+        for batch in range(gene_exp.shape[0]):
+            gene_exp_ = gene_exp.clone()
+            xyz_ = xyz.clone()
+            celltype = self.model(gene_exp_[batch], edge_index, xyz_, subgraph_id, tau, hard_)
+            celltypes.append(celltype)
+        celltypes = torch.stack(celltypes)
+        print("508 ", celltypes.shape)
+        return celltypes
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, data, batch_idx):
         # calculate losses and metrics for all training nodes in the batch.
-        batch_size = torch.sum(batch.train_mask)
-        data = self.transform(batch)
-
+        batch_size = torch.sum(data.train_mask)
+        # data = self.transform(batch)
+        # data = batch
         if self.trainmode == 0:
             # backprop/metrics for all nodes in batch (including neighbors)
             idx = data.train_mask
         elif self.trainmode == 1:
             # backprop/metrics for only "root" nodes, not neighbors
-            idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0]
+            idx = torch.where(data.n_id == data.input_id.unsqueeze(-1))[0]
         celltype_pred = self.forward(
             gene_exp=data.x[:, data.gene_exp_ind],
             edge_index=data.edge_index,
@@ -523,33 +531,48 @@ class LitGnnFs(L.LightningModule):
 
         # conditionally remove "slow nodes" (from halfhop)
         if hasattr(data, "slow_node_mask"):
-            celltype_pred = celltype_pred[~data.slow_node_mask]
+            celltype_pred = celltype_pred[:,~data.slow_node_mask,:]
+
+        # data.celltype = data.celltype.unsqueeze(0).expand(self.num_samples, -1)
+        data.celltype = data.celltype.unsqueeze(0).repeat(self.num_samples, 1)
+
+        
+        data.celltype = data.celltype[:, idx]
+        celltype_pred = celltype_pred[:,idx,:]
+        
+        celltype_pred = celltype_pred.reshape(-1, celltype_pred.shape[-1])
+        data.celltype = data.celltype.reshape(-1)
+
+        print("train shapes ", celltype_pred.shape, data.celltype.shape) # train shapes  torch.Size([11675, 158]) torch.Size([11675])
+
 
         # calculate loss
         if self.model.focal_loss:
             train_loss_ce = sigmoid_focal_loss(
-                inputs=celltype_pred[idx],
-                targets=F.one_hot(data.celltype[idx], num_classes=self.hparams.model.out_ch).to(torch.float),
+                inputs=celltype_pred,
+                targets=F.one_hot(data.celltype, num_classes=self.hparams.model.out_ch).to(torch.float),
                 # targets = data.celltype[idx],
                 alpha=0.25,
                 gamma=2.0,
                 reduction="mean",
             )
         else:
-            train_loss_ce = self.loss_ce(celltype_pred[idx], data.celltype[idx])
-
+            train_loss_ce = self.loss_ce(celltype_pred, data.celltype)
+        print("559")
         if self.model.fs_method == "scGist":
             train_loss_reg = self.model.feature_regularizer(self.model.logits) * 100
             train_loss_ce += train_loss_reg 
 
-        train_loss_ce = train_loss_ce.unsqueeze(0)
-        train_loss_ce = self.sfe(train_loss_ce, self.model.extra) # only methods that require score function estimates return something for .extra
-        train_loss_ce = train_loss_ce.squeeze()
+        print("566 ", train_loss_ce) # 566  tensor(6.7918, device='cuda:0', grad_fn=<NllLossBackward0>)
+
+        # train_loss_ce = train_loss_ce.unsqueeze(0)
+        # train_loss_ce = self.sfe(train_loss_ce, self.model.extra) # only methods that require score function estimates return something for .extra
+        # train_loss_ce = train_loss_ce.squeeze()
 
         # calculate metrics
 
-        self.train_overall_acc(preds=celltype_pred[idx], target=data.celltype[idx])
-        self.train_macro_acc(preds=celltype_pred[idx], target=data.celltype[idx])
+        self.train_overall_acc(preds=celltype_pred, target=data.celltype)
+        self.train_macro_acc(preds=celltype_pred, target=data.celltype)
 
 
         # log losses and metrics
@@ -566,6 +589,8 @@ class LitGnnFs(L.LightningModule):
         self.log("train_overall_acc", self.train_overall_acc, **options)
         self.log("train_macro_acc", self.train_macro_acc, **options)
         self.log("tau", tau_schedule(self.tautype, self.current_epoch, self.trainer.max_epochs), **options)
+
+        print("592 ", train_loss_ce)
         return train_loss_ce
 
     def on_train_epoch_end(self):
@@ -590,16 +615,16 @@ class LitGnnFs(L.LightningModule):
                 writer.writerow([v for v in metrics.values()])
             return
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, data, batch_idx):
         # calculate losses and metrics for all nodes in the batch.
 
-        batch_size = batch.input_id.size(0)
-        idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0] 
+        batch_size = data.input_id.size(0)
+        idx = torch.where(data.n_id == data.input_id.unsqueeze(-1))[0] 
         # metrics calculated for only "root" nodes, not neighbors
 
         # halfhop or pass-through
-        data = self.transform(batch)
-
+        # data = self.transform(batch)
+        # data = batch
         celltype_pred = self.forward(
             gene_exp=data.x[:, data.gene_exp_ind],
             edge_index=data.edge_index,
@@ -608,23 +633,33 @@ class LitGnnFs(L.LightningModule):
             tau=tau_schedule(self.tautype, self.current_epoch, self.trainer.max_epochs),
             hard_=True,
         )
-
-        # conditionally remove "slow nodes" (from halfhop)
         if hasattr(data, "slow_node_mask"):
-            celltype_pred = celltype_pred[~data.slow_node_mask]
+            celltype_pred = celltype_pred[:,~data.slow_node_mask,:]
+
+        # data.celltype = data.celltype.unsqueeze(0).expand(self.num_samples, -1)
+        data.celltype = data.celltype.unsqueeze(0).repeat(self.num_samples, 1)
+
+        data.celltype = data.celltype[:, idx]
+        celltype_pred = celltype_pred[:,idx,:]
+        
+        celltype_pred = celltype_pred.reshape(-1, celltype_pred.shape[-1])
+        data.celltype = data.celltype.reshape(-1)
+
+        print("shapes ", celltype_pred.shape, data.celltype.shape) 
+
 
         # calculate losses and metrics
         if self.model.focal_loss:
             val_loss_ce = sigmoid_focal_loss(
-                inputs=celltype_pred[idx],
-                targets=F.one_hot(batch.celltype[idx], num_classes=self.hparams.model.out_ch).to(torch.float),
+                inputs=celltype_pred,
+                targets=F.one_hot(data.celltype, num_classes=self.hparams.model.out_ch).to(torch.float),
                 # targets = batch.celltype[idx],
                 alpha=0.25,
                 gamma=2.0,
                 reduction="mean",
             )
         else:
-            val_loss_ce = self.loss_ce(celltype_pred[idx], batch.celltype[idx])
+            val_loss_ce = self.loss_ce(celltype_pred, data.celltype)
 
 
         if self.model.fs_method == "scGist":
@@ -632,10 +667,10 @@ class LitGnnFs(L.LightningModule):
             val_loss_ce += val_loss_reg 
 
 
-        self.val_overall_acc(preds=celltype_pred[idx], target=batch.celltype[idx]) # original
+        self.val_overall_acc(preds=celltype_pred, target=data.celltype) # original
 
 
-        self.val_macro_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
+        self.val_macro_acc(preds=celltype_pred, target=data.celltype)
 
         # log losses and metrics
         options = {
@@ -650,19 +685,20 @@ class LitGnnFs(L.LightningModule):
         self.log("val_loss_reg", val_loss_reg, **options) if self.model.fs_method == "scGist" else None
         self.log("val_overall_acc", self.val_overall_acc, **options)
         self.log("val_macro_acc", self.val_macro_acc, **options)
+        print("687 ", val_loss_ce)
 
     def on_validation_epoch_end(self):
         pass
 
-    def predict_step(self, batch, batch_idx):
+    def predict_step(self, data, batch_idx):
         # calculate losses and metrics for all nodes in the batch.
 
-        batch_size = batch.input_id.size(0)
-        idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0]
+        batch_size = data.input_id.size(0)
+        idx = torch.where(data.n_id == data.input_id.unsqueeze(-1))[0]
 
         # halfhop or pass-through
-        data = self.transform(batch)
-
+        # data = self.transform(batch)
+        # data = batch
         celltype_pred = self.forward(
             gene_exp=data.x[:, data.gene_exp_ind],
             edge_index=data.edge_index,
@@ -674,23 +710,37 @@ class LitGnnFs(L.LightningModule):
 
         # conditionally remove "slow nodes" (from halfhop)
         if hasattr(data, "slow_node_mask"):
-            celltype_pred = celltype_pred[~data.slow_node_mask]
+            celltype_pred = celltype_pred[:,~data.slow_node_mask,:]
 
-        return [celltype_pred[idx], batch.celltype[idx]]
+
+        # data.celltype = data.celltype.unsqueeze(0).expand(self.num_samples, -1)
+        data.celltype = data.celltype.unsqueeze(0).repeat(self.num_samples, 1)
+
+        data.celltype = data.celltype[:, idx]
+        celltype_pred = celltype_pred[:,idx,:]
+        
+        celltype_pred = celltype_pred.reshape(-1, celltype_pred.shape[-1])
+        data.celltype = data.celltype.reshape(-1)
+
+        print("shapes ", celltype_pred.shape, data.celltype.shape) 
+
+
+
+        return [celltype_pred, data.celltype]
 
     def on_predict_epoch_end(self):
         pass
 
-    def test_step(self, batch, batch_idx):
+    def test_step(self, data, batch_idx):
         # calculate losses and metrics for all nodes in the batch.
 
-        batch_size = batch.input_id.size(0)
-        idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0] 
+        batch_size = data.input_id.size(0)
+        idx = torch.where(data.n_id == data.input_id.unsqueeze(-1))[0] 
         # metrics calculated for only "root" nodes, not neighbors
 
         # halfhop or pass-through
-        data = self.transform(batch)
-
+        # data = self.transform(batch)
+        # data = batch
         celltype_pred = self.forward(
             gene_exp=data.x[:, data.gene_exp_ind],
             edge_index=data.edge_index,
@@ -702,29 +752,41 @@ class LitGnnFs(L.LightningModule):
 
         # conditionally remove "slow nodes" (from halfhop)
         if hasattr(data, "slow_node_mask"):
-            celltype_pred = celltype_pred[~data.slow_node_mask]
+            celltype_pred = celltype_pred[:,~data.slow_node_mask,:]
+
+        # data.celltype = data.celltype.unsqueeze(0).expand(self.num_samples, -1)
+        data.celltype = data.celltype.unsqueeze(0).repeat(self.num_samples, 1)
+        
+        data.celltype = data.celltype[:, idx]
+        celltype_pred = celltype_pred[:,idx,:]
+        
+        celltype_pred = celltype_pred.reshape(-1, celltype_pred.shape[-1])
+        data.celltype = data.celltype.reshape(-1)
+
+        print("shapes ", celltype_pred.shape, data.celltype.shape) 
+
 
         # calculate losses and metrics
         if self.model.focal_loss:
             test_loss_ce = sigmoid_focal_loss(
-                inputs=celltype_pred[idx],
-                targets=F.one_hot(batch.celltype[idx], num_classes=self.hparams.model.out_ch).to(torch.float),
+                inputs=celltype_pred,
+                targets=F.one_hot(data.celltype, num_classes=self.hparams.model.out_ch).to(torch.float),
                 # targets = batch.celltype[idx],
                 alpha=0.25,
                 gamma=2.0,
                 reduction="mean",
             )
         else:
-            test_loss_ce = self.loss_ce(celltype_pred[idx], batch.celltype[idx])
+            test_loss_ce = self.loss_ce(celltype_pred, data.celltype)
 
         
-        self.test_overall_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
-        self.test_macro_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
-        self.test_micro_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
+        self.test_overall_acc(preds=celltype_pred, target=data.celltype)
+        self.test_macro_acc(preds=celltype_pred, target=data.celltype)
+        self.test_micro_acc(preds=celltype_pred, target=data.celltype)
 
-        self.test_f1_overall(preds=celltype_pred[idx], target=batch.celltype[idx])
-        self.test_f1_macro(preds=celltype_pred[idx], target=batch.celltype[idx])
-        self.test_f1_micro(preds=celltype_pred[idx], target=batch.celltype[idx])
+        self.test_f1_overall(preds=celltype_pred, target=data.celltype)
+        self.test_f1_macro(preds=celltype_pred, target=data.celltype)
+        self.test_f1_micro(preds=celltype_pred, target=data.celltype)
 
         # log losses and metrics
         options = {
@@ -743,8 +805,8 @@ class LitGnnFs(L.LightningModule):
         self.log("test_f1_overall", self.test_f1_overall, **options)
         self.log("test_f1_macro", self.test_f1_macro, **options)
         self.log("test_f1_micro", self.test_f1_micro, **options)
-        self.test_pred.append(celltype_pred[idx])
-        self.test_labels.append(batch.celltype[idx])
+        self.test_pred.append(celltype_pred)
+        self.test_labels.append(data.celltype)
 
     def on_test_epoch_end(self):
         all_predictions = []
@@ -769,6 +831,9 @@ class LitGnnFs(L.LightningModule):
             lr=self.hparams.trainer.lr,
             weight_decay=1e-4,
         )
+        if self.hparams.trainer.lr_scheduler == "constant":
+            print("CONSTANT OPT")
+            return optimizer
 
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
@@ -816,12 +881,11 @@ class LitGnnFs(L.LightningModule):
     #         return optimizer
 
 def tau_schedule(type, epoch, total_epoch):
-    start_tau = 10
-    end_tau = 0.01 
-    # end_tau = 0.1
+    start_tau = 1e3
+    end_tau = 1.0
 
     if type == 'exp':
         tau = start_tau * (end_tau / start_tau) ** (epoch / total_epoch)
     elif type == "constant":
-        tau = 0.1
+        tau = 1.0
     return tau

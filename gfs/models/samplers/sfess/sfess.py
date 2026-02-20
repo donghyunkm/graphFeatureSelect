@@ -30,7 +30,7 @@ class SFESSSampler(nn.Module):
         self.f = None
         self.cps = cps
 
-    def forward(self, scores, tau=1.0):
+    def forward(self, scores):
         batch, choices, _ = scores.shape
         flat_scores = scores.permute((0, 2, 1)).reshape(batch, choices)
         samples = sample_subset(flat_scores, self.k, self.n_samples)

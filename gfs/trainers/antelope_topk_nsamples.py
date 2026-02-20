@@ -6,7 +6,7 @@ from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
 from omegaconf import DictConfig, OmegaConf
 import pickle
 from gfs.data.hemisphere import PyGAnnDataGraphDataModule
-from gfs.models.antelope_topk import LitGnnFs
+from gfs.models.antelope_topk_nsamples import LitGnnFs
 from gfs.utils import get_datetime, get_paths
 import torch
 import random

@@ -22,7 +22,7 @@ class PPSSampler(nn.Module):
         self.n_samples = n_samples
         self.sampler = make_sampler(activation, sampling, gradient)
 
-    def forward(self, scores, tau=1.0):
+    def forward(self, scores):
         batch, choices, _ = scores.shape
         flat_scores = scores.permute((0, 2, 1)).reshape(batch, choices)
         k = self.k.repeat(batch, 1)

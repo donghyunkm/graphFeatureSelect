@@ -8,7 +8,6 @@ from gfs.models.samplers.simple_pkg.simple import Layer
 
 LARGE_NUMBER = 1.0e10
 
-
 class SIMPLESampler(nn.Module):
     def __init__(self, k, device, n_samples=1, assign_value=False):
         super(SIMPLESampler, self).__init__()
@@ -19,7 +18,7 @@ class SIMPLESampler(nn.Module):
         self.n_samples = n_samples
         self.assign_value = assign_value
 
-    def forward(self, scores, sample_from_score=True, tau=1.0):
+    def forward(self, scores, sample_from_score=True):
         nnodes, choices, ensemble = scores.shape
         local_k = min(self.k, choices)
         flat_scores = scores.permute((0, 2, 1)).reshape(nnodes * ensemble, choices)

@@ -4,7 +4,6 @@ from itertools import chain
 import pickle
 from gfs.models.samplers.simple_pkg.node import Node, DECOMPOSITION, LITERAL
 
-
 def lookup_node(elements, nodes, literals):
     elements = tuple(elements)
     el = nodes.get(elements)

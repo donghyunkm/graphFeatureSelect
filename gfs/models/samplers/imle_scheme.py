@@ -6,7 +6,6 @@ from gfs.models.samplers.imle_pkg.noise import GumbelDistribution
 from gfs.models.samplers.imle_pkg.target import TargetDistribution
 from gfs.models.samplers.imle_pkg.wrapper import imle
 
-
 LARGE_NUMBER = 1.0e10
 
 
@@ -49,7 +48,7 @@ class IMLESampler(nn.Module):
         mask = select_from_candidates(local_logits, self.k)
         return mask, None
 
-    def forward(self, logits: torch.Tensor, train=True, tau=1.0):
+    def forward(self, logits: torch.Tensor, train=True):
         if train:
             return self.train_forward(logits)
         else:
