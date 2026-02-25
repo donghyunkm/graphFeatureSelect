@@ -881,8 +881,11 @@ class LitGnnFs(L.LightningModule):
     #         return optimizer
 
 def tau_schedule(type, epoch, total_epoch):
-    start_tau = 1e3
+    start_tau = 1e5
     end_tau = 1.0
+
+    if epoch >= 400:
+        return 1.0
 
     if type == 'exp':
         tau = start_tau * (end_tau / start_tau) ** (epoch / total_epoch)

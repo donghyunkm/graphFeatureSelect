@@ -47,44 +47,6 @@ class MLP(nn.Module):
         return self.fc[-1](x)
 
 
-class FeatureRegularizer(nn.Module):
-    def __init__(self, l1=0.1, panel_size=None, priority_score=None, pairs=None, alpha=0.5, beta=0.5, gamma=0.5, strict=True):
-        super().__init__()
-        self.l1 = 0.01 if l1 is None else l1
-        self.alpha = alpha
-        self.beta = beta
-        self.gamma = gamma
-
-        self.n_features = panel_size if panel_size else None
-        if pairs is not None:
-            self.pairs = pairs
-        else:
-            self.pairs = None
-
-        self.strict = strict
-
-    def forward(self, x):
-        abs_x = torch.abs(x)
-        reg = torch.tensor(0., dtype=x.dtype, device=x.device)
-
-        # Force weights toward 0 or 1
-        reg += torch.sum(abs_x * torch.abs(x - 1))
-
-        # Panel size constraint
-        if self.n_features is not None:
-            if self.strict:
-                reg += torch.abs(torch.sum(abs_x) - self.n_features) * self.alpha
-            else:
-                reg += torch.max(torch.sum(abs_x) - self.n_features, 0) * self.alpha
-
-        # Pairwise selection
-        if self.pairs is not None:
-            # Similar to tf.tensordot(abs_x, pairs, axes=1)
-            pair_reg = torch.matmul(abs_x, self.pairs)
-            reg += torch.sum(torch.abs(pair_reg)) * self.gamma
-
-        return self.l1 * reg
-
 
 class GnnFs(torch.nn.Module):
     """
@@ -135,10 +97,7 @@ class GnnFs(torch.nn.Module):
         super(GnnFs, self).__init__()
         self.fs_method = fs_method
 
-        if self.fs_method == "persist":
-            self.logits = nn.Parameter(torch.randn(n_select, gene_ch))
-        elif self.fs_method == "scGist":
-            self.logits = nn.Parameter(torch.full((1, gene_ch), 0.5)) 
+        self.logits = nn.Parameter(torch.full((gene_ch,), -3.0))
         self.dropout = dropout
 
         self.pre_linear = pre_linear
@@ -152,11 +111,13 @@ class GnnFs(torch.nn.Module):
         self.lins = torch.nn.ModuleList()
         self.lns = torch.nn.ModuleList()
         self.bns = torch.nn.ModuleList()
-
+        self.beta = 2/3      # temperature (lower => harder gates)
+        self.gamma = -0.1    # stretch lower
+        self.zeta = 1.1      # stretch upper
+        self.lambda_l0 = 1e-4
+        self.n_select = n_select
         self.lin_in = torch.nn.Linear(gene_ch, hid_ch)
         self.focal_loss = focal_loss
-        if self.fs_method == "scGist":
-            self.feature_regularizer = FeatureRegularizer(l1=0.1, panel_size=n_select)
 
         if not self.pre_linear:
             if gnn == "gat":
@@ -208,39 +169,58 @@ class GnnFs(torch.nn.Module):
         self.xyz_lin.reset_parameters()
         self.logits.reset_parameters()
 
-    def get_mask(self, tau, subgraph_id):
+
+    def nonzero_gate_prob(self):
         """
-        Get soft k-hot mask
+        Hard-concrete approximation of P(z > 0) from Louizos et al.
+        Used for expected L0 regularization and deterministic ranking.
         """
-        if self.training:
-            # sample soft k-hot vectors for each subgraph in the batch during training
-            # extra samples are harmless, makes indexing more straightforward;
-            # case: e.g. subgraph_id.unique() = [0, 2, 3, 4]
-            n_subgraphs = subgraph_id.max() + 1
-            # sample has dims (n_selections, n_subgraphs, n_features) --> chooses 1 gene for each of n_selections
-            sample = F.gumbel_softmax(self.logits.unsqueeze(1).repeat(1, n_subgraphs, 1), tau=tau, hard=False, dim=-1)
-            print("SAMPLE ", sample.shape)
-            # k_hot has dims (n_subgraphs, n_features) --> uses max operation to combine/sum the n_selections into 1 dimension 
-            k_hot = torch.max(sample, dim=0).values
-            print("KHOT ", k_hot.shape)
-            # repeat k-hot masks for each node based on their subgraph membership
-            return k_hot[subgraph_id]
+        ratio = torch.tensor(-self.gamma / self.zeta, device=self.logits.device, dtype=self.logits.dtype)
+        return torch.sigmoid(self.logits - self.beta * torch.log(ratio))
+
+    def sample_mask(self, x, training: bool):
+        """
+        Returns mask shaped like x: (batch, in_dim).
+        Training: stochastic, differentiable mask in [0,1].
+        Eval: deterministic hard top-k 0/1 mask.
+        """
+        bsz, in_dim = x.shape
+        logits = self.logits.view(1, in_dim).expand(bsz, in_dim)
+
+        if training:
+            # sample u ~ Uniform(0,1), concrete reparam
+            u = torch.rand_like(logits).clamp_(1e-6, 1 - 1e-6)
+            s = torch.sigmoid((logits + torch.log(u) - torch.log(1 - u)) / self.beta)
+
+            # stretch + hard-sigmoid (clamp)
+            s = s * (self.zeta - self.gamma) + self.gamma
+            mask = s.clamp(0.0, 1.0)
         else:
-            # return hard k-hot mask for evaluation
-            k_hot_ind = torch.argmax(self.logits, dim=1)
-            k_hot = torch.zeros(1, self.logits.size(1), device=self.logits.device)
-            k_hot.scatter_(1, k_hot_ind.unsqueeze(0), 1)
-            # k_hot has dims (1, n_features)
-            return k_hot
+            # deterministic hard top-k mask
+            scores = self.nonzero_gate_prob()
+            topk_idx = torch.topk(scores, k=self.n_select).indices
+            hard_mask_1d = torch.zeros(in_dim, device=x.device, dtype=x.dtype)
+            hard_mask_1d[topk_idx] = 1.0
+            mask = hard_mask_1d.view(1, in_dim).expand(bsz, in_dim)
+
+        return mask
+
+    def l0_penalty(self):
+        """
+        Optional: expected number of active features (use as sparsity regularizer).
+        Add: loss += lambda_l0 * model.l0_penalty()
+        """
+        return self.nonzero_gate_prob().sum()
 
     def get_mask_indices(self):
-        """
-        Get indices of highest probability features.
-        """
-        probs = F.softmax(self.logits, dim=1)
-        mask_indices = torch.argmax(probs, dim=1)
-        mask_probs = torch.gather(probs, dim=1, index=mask_indices.unsqueeze(1))
-        return mask_indices, mask_probs.squeeze()
+
+        probs = self.nonzero_gate_prob().detach().cpu()
+        values, indices = torch.topk(probs, k=self.n_select)
+
+
+        return indices, values
+
+
 
     def forward(self, x, edge_index, xyz, subgraph_id, tau, hard_):
 
@@ -251,12 +231,9 @@ class GnnFs(torch.nn.Module):
         # print("xyz shape ", xyz.shape)
         # print("mask ", mask.shape)
 
-        if self.fs_method == "persist":
-            mask = self.get_mask(tau, subgraph_id)
-            # print("254persist ", mask.shape, x.shape) #254persist  torch.Size([16418, 500]) torch.Size([16418, 500])
-            x = mask * x
-        if self.fs_method == "scGist":
-            x = x * self.logits
+        mask = self.sample_mask(x, self.training)
+        x = x * mask
+
 
         if self.x_res:
             x_to_add = self.res_lin(x)
@@ -412,9 +389,8 @@ class LitGnnFs(L.LightningModule):
         else:
             train_loss_ce = self.loss_ce(celltype_pred[idx], data.celltype[idx])
 
-        if self.model.fs_method == "scGist":
-            train_loss_reg = self.model.feature_regularizer(self.model.logits) * 100
-            train_loss_ce += train_loss_reg 
+        l0_loss = self.model.lambda_l0 * self.model.l0_penalty()
+        train_loss = train_loss_ce + l0_loss
 
         # calculate metrics
 
@@ -432,33 +408,34 @@ class LitGnnFs(L.LightningModule):
         }
 
         self.log("train_loss_ce", train_loss_ce, **options)
-        self.log("train_loss_reg", train_loss_reg, **options) if self.model.fs_method == "scGist" else None
+        self.log("l0_loss", l0_loss, **options)
+
         self.log("train_overall_acc", self.train_overall_acc, **options)
         self.log("train_macro_acc", self.train_macro_acc, **options)
         self.log("tau", tau_schedule(self.tautype, self.current_epoch, self.trainer.max_epochs), **options)
-        return train_loss_ce
+        return train_loss
 
     def on_train_epoch_end(self):
         # log gene selections and probabilities at the end of each epoch
-        if self.model.fs_method == "persist":
-            mask_indices, mask_probs = self.model.get_mask_indices()
-            metrics = {"epoch": self.current_epoch}
 
-            for i in range(mask_indices.size(0)):
-                metrics[f"sel_{i}"] = mask_indices[i].item()
+        mask_indices, mask_probs = self.model.get_mask_indices()
+        metrics = {"epoch": self.current_epoch}
 
-            for i in range(mask_indices.size(0)):
-                metrics[f"prob_{i}"] = mask_probs[i].item()
+        for i in range(mask_indices.size(0)):
+            metrics[f"sel_{i}"] = mask_indices[i].item()
 
-            # get filepath of logger
-            path = self.logger._root_dir + "/selections.csv"
-            file_exists = os.path.isfile(path)
-            with open(path, "a", newline="") as f:
-                writer = csv.writer(f)
-                if not file_exists:
-                    writer.writerow(metrics.keys())
-                writer.writerow([v for v in metrics.values()])
-            return
+        for i in range(mask_indices.size(0)):
+            metrics[f"prob_{i}"] = mask_probs[i].item()
+
+        # get filepath of logger
+        path = self.logger._root_dir + "/selections.csv"
+        file_exists = os.path.isfile(path)
+        with open(path, "a", newline="") as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(metrics.keys())
+            writer.writerow([v for v in metrics.values()])
+        return
 
     def validation_step(self, batch, batch_idx):
         # calculate losses and metrics for all nodes in the batch.
@@ -497,10 +474,9 @@ class LitGnnFs(L.LightningModule):
         else:
             val_loss_ce = self.loss_ce(celltype_pred[idx], batch.celltype[idx])
 
+        l0_loss = self.model.lambda_l0 * self.model.l0_penalty()
+        val_loss = val_loss_ce + l0_loss
 
-        if self.model.fs_method == "scGist":
-            val_loss_reg = self.model.feature_regularizer(self.model.logits)
-            val_loss_ce += val_loss_reg 
 
 
         self.val_overall_acc(preds=celltype_pred[idx], target=batch.celltype[idx]) # original
@@ -518,7 +494,8 @@ class LitGnnFs(L.LightningModule):
         }
 
         self.log("val_loss_ce", val_loss_ce, **options)
-        self.log("val_loss_reg", val_loss_reg, **options) if self.model.fs_method == "scGist" else None
+        self.log("l0_loss", l0_loss, **options)
+
         self.log("val_overall_acc", self.val_overall_acc, **options)
         self.log("val_macro_acc", self.val_macro_acc, **options)
 
@@ -588,7 +565,9 @@ class LitGnnFs(L.LightningModule):
         else:
             test_loss_ce = self.loss_ce(celltype_pred[idx], batch.celltype[idx])
 
-        
+        l0_loss = self.model.lambda_l0 * self.model.l0_penalty()
+        test_loss = test_loss_ce + l0_loss
+
         self.test_overall_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
         self.test_macro_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
         self.test_micro_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
@@ -607,6 +586,8 @@ class LitGnnFs(L.LightningModule):
         }
 
         self.log("test_loss_ce", test_loss_ce, **options)
+        self.log("l0_loss", l0_loss, **options)
+
         self.log("test_overall_acc", self.test_overall_acc, **options)
         self.log("test_macro_acc", self.test_macro_acc, **options)
         self.log("test_micro_acc", self.test_micro_acc, **options)

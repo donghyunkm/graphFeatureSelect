@@ -24,7 +24,7 @@ data:
   rand_seed: 42
   prefix: "test"
 model:
-  name: "antelope_topk"
+  name: "antelope"
   gene_ch: ${data.n_genes}
   spatial_ch: 3 # should match length of spatial_coords
   hid_ch: 32

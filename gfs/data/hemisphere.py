@@ -306,7 +306,7 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
             num_neighbors=[-1] * self.n_hops,
             batch_size=self.batch_size,
             shuffle=True,
-            num_workers=32,
+            num_workers=8,
             input_nodes=self.data.train_mask,
             worker_init_fn=seed_worker,
             generator=torch.Generator().manual_seed(42)
@@ -320,7 +320,7 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
             num_neighbors=[-1] * self.n_hops,
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=16,
+            num_workers=8,
             worker_init_fn=seed_worker,
             generator=torch.Generator().manual_seed(42)
         )
@@ -333,7 +333,7 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
             num_neighbors=[-1] * self.n_hops,
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=16,
+            num_workers=8,
             worker_init_fn=seed_worker,
             generator=torch.Generator().manual_seed(42)
         )
@@ -359,7 +359,7 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
             num_neighbors=[-1] * self.n_hops,
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=16,
+            num_workers=8,
             worker_init_fn=seed_worker,
             generator=torch.Generator().manual_seed(42)
         )

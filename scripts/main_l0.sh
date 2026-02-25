@@ -22,4 +22,4 @@ sleep 10s
 export PATH=/data/users1/dkim195/miniconda3/bin:$PATH
 source /data/users1/dkim195/miniconda3/etc/profile.d/conda.sh
 conda activate /data/users1/dkim195/miniconda3/envs/gfs
-python ../gfs/trainers/antelope_topk_nsamples.py topk.sampler="pps" topk.pps_sample="pareto" topk.pps_activation="sigmoid_topk" topk.pps_gradient="straight_through" topk.subgraph=False data.prefix="constantlr005_tau_1e5to1_constantlater" trainer.lr=0.005 trainer.max_epochs=500 topk.num_samples=10 model.tautype="exp"
+python ../gfs/trainers/antelope_l0.py data.prefix="l0" 
