@@ -37,7 +37,7 @@ def get_paths(verbose: bool = False) -> dict:
     """
 
     # get path of this file
-    root_path = Path(__file__).parent.parent
+    root_path = Path(__file__).parent.parent.parent
     config_path = root_path / "config.toml"
     if not config_path.exists():
         raise FileNotFoundError(f"Config file not found at {config_path}")
