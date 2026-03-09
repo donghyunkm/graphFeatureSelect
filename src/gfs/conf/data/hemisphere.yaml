@@ -1,0 +1,21 @@
+name: "one_hemisphere"
+file_names:
+  - "one_section_hemi_0926.h5ad"
+test_names:
+  - "test.h5ad"
+n_genes: 500
+n_labels: 158
+cell_type: "subclass"
+spatial_coords:
+  - "x_section"
+  - "y_section"
+  - "z_section"
+self_loops_only: false
+batch_size: 64
+n_hops: 2
+num_workers: 16
+d_threshold: 1000
+n_splits: 5
+cv: -1
+rand_seed: 42
+prefix: "test"

@@ -8,9 +8,12 @@ GFSNet learns optimal gene panels for spatial transcriptomics using graph neural
 
 The broad goal is to go over different variants of feature selection layers and graph neural network implementations for the classification task.
 
-The main entry points for the current scope are:
-`trainers/antelope.py`
-`trainers/antelope_stg.py`
+The main entry point is:
+`src/gfs/trainers/train.py`
+
+Feature selection method is selected via Hydra config:
+- `model=antelope` (Gumbel softmax / scGist)
+- `model=antelope_stg` (Stochastic Gates)
 
 ---
 
@@ -18,33 +21,59 @@ The main entry points for the current scope are:
 
 ```
 gfsnet/
-├── gfs/                    # Main package
-│   ├── configs/           # Hydra experiment configs
-│   │   ├── antelope.yaml
-│   │   ├── antelope_top10.yaml
-│   │   └── antelope_topk.yaml
-│   ├── data/              # Data loading (AnnData → PyG)
-│   │   └── hemisphere.py
-│   ├── models/            # GNN feature selection models
-│   │   ├── antelope.py
-│   │   ├── antelope_stg.py
-│   │   ├── samplers/      # Differentiable sampling schemes
-│   │   ├── stg/           # Stochastic gates implementation
-│   │   └── transforms.py
-│   ├── trainers/          # Training scripts
-│   │   ├── antelope.py    # Main entry point
-│   │   └── antelope_stg.py # Main entry point (STG variant)
-│   └── utils.py
-├── scripts/               # SLURM job scripts
-│   ├── main.sh            # Runs antelope.py (single job)
-│   └── mainconfig.sh      # Runs antelope.py (array jobs with config)
-├── docs/                  # Documentation
-│   ├── dev.md            # Development setup
-│   ├── model.md          # Model architecture details
-│   ├── experiments.md    # Running experiments
+├── src/
+│   └── gfs/                        # Main package
+│       ├── __init__.py
+│       ├── conf/                    # Hydra config (composable groups)
+│       │   ├── config.yaml          # top-level defaults list
+│       │   ├── data/
+│       │   │   └── hemisphere.yaml
+│       │   ├── model/
+│       │   │   ├── antelope.yaml
+│       │   │   └── antelope_stg.yaml
+│       │   ├── trainer/
+│       │   │   └── default.yaml
+│       │   └── logging/
+│       │       └── default.yaml
+│       ├── data/
+│       │   ├── __init__.py
+│       │   └── hemisphere.py        # PyGAnnData, DataModule
+│       ├── models/
+│       │   ├── __init__.py
+│       │   ├── backbone.py          # GnnFs (unified GNN + feature selection)
+│       │   ├── lit_module.py        # LitGnnFs Lightning module (unified)
+│       │   ├── components.py        # MLP, FeatureRegularizer
+│       │   ├── feature_selection/
+│       │   │   ├── __init__.py      # registry / factory
+│       │   │   ├── gumbel.py        # persist/scGist (Gumbel softmax mask)
+│       │   │   └── stg.py           # STG FeatureSelector
+│       │   ├── samplers/            # Differentiable sampling schemes
+│       │   │   └── ...
+│       │   ├── stg/                 # Original STG layers/utils (kept for reference)
+│       │   │   ├── layers.py
+│       │   │   └── utils.py
+│       │   └── transforms.py        # HalfHop
+│       ├── trainers/
+│       │   ├── __init__.py
+│       │   └── train.py             # Single unified entry point
+│       └── utils.py
+├── scripts/                         # SLURM job scripts
+│   ├── main.sh
+│   └── mainconfig.sh
+├── docs/                            # Documentation
+│   ├── dev.md
+│   ├── model.md
+│   ├── experiments.md
 │   └── data-description.md
-├── tests/                 # Test suite
-└── pyproject.toml        # Package config (Hatchling + uv)
+├── tests/                           # Test suite
+│   ├── test_imports.py
+│   ├── test_config.py
+│   ├── test_model_assembly.py
+│   └── test_lit_module.py
+├── pyproject.toml                   # Package config (Hatchling + uv, src layout)
+├── config.toml                      # Runtime paths
+├── CLAUDE.md
+└── README.md
 ```
 
 ## Documentation
@@ -56,11 +85,14 @@ gfsnet/
 
 ## Core Components
 
-### Active Models
+### Unified Model
 
-Two main feature selection approaches (see [docs/model.md](docs/model.md)):
-- **Antelope** (`trainers/antelope.py`) - Default GNN with differentiable feature selection using various sampling schemes (Gumbel, IMLE, PPS, etc.)
-- **Antelope STG** (`trainers/antelope_stg.py`) - GNN with Stochastic Gates (STG) for feature selection
+Single GNN model (`models/backbone.py: GnnFs`) with composable feature selection:
+- **persist** - Gumbel softmax k-hot mask (`feature_selection/gumbel.py`)
+- **scGist** - Continuous logits with regularizer (`feature_selection/gumbel.py`)
+- **stg** - Stochastic Gates (`feature_selection/stg.py`)
+
+Feature selection method is chosen via config (`model.fs_method`) and instantiated by `feature_selection/__init__.py: get_feature_selector()`.
 
 ### Data Pipeline
 
@@ -71,31 +103,29 @@ Two main feature selection approaches (see [docs/model.md](docs/model.md)):
 
 ### Configuration
 
-Uses Hydra for experiment configuration:
+Uses Hydra with composable config groups:
 
 ```yaml
-data:
-  n_genes: 500
-  n_labels: 158
-  batch_size: 64
-  n_hops: 2
+# Override model variant:
+python -m gfs.trainers.train model=antelope
+python -m gfs.trainers.train model=antelope_stg
 
-model:
-  n_select: 10        # Genes to select
-  gnn: "gat"          # "gat", "sage", or "gcn"
-  fs_method: "persist"
-
-trainer:
-  max_epochs: 500
-  lr: 0.001
+# Override specific params:
+python -m gfs.trainers.train model.n_select=20 trainer.max_epochs=100
 ```
 
 See [docs/experiments.md](docs/experiments.md) for complete configuration options.
+
+## Environment
+
+- Conda env: `gfsnet` (Python 3.12)
+- Package manager: **uv** (not pip)
+- Install: `conda activate gfsnet && uv pip install -e ".[dev,mldep,data]"`
+- Run: `conda run -n gfsnet python ...`
 
 ## Tech Stack
 
 - **PyTorch**, **PyTorch Geometric**, **Lightning** - Deep learning
 - **Hydra** - Configuration management
 - **AnnData** - Spatial transcriptomics data
-- **Hatchling + uv** - Modern Python packaging
-
+- **Hatchling + uv** - Modern Python packaging (src layout)

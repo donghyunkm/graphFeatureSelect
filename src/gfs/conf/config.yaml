@@ -1,0 +1,8 @@
+defaults:
+  - data: hemisphere
+  - model: antelope
+  - trainer: default
+  - logging: default
+  - _self_
+
+expname: "default"
