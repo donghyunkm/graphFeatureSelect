@@ -135,14 +135,14 @@ The following rules are intentionally ignored:
 ### Running Tests
 
 ```bash
-# Run all tests
-pytest
+# Run all tests (90 integration tests)
+conda run -n gfsnet python -m pytest
 
 # Run specific test file
-pytest tests/test_hemisphere.py
+conda run -n gfsnet python -m pytest tests/test_data_pipeline.py -v
 
 # Run with coverage
-pytest --cov=gfs
+conda run -n gfsnet python -m pytest --cov=gfs
 ```
 
 ### Building Package

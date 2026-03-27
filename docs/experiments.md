@@ -4,42 +4,67 @@
 
 ```bash
 # Activate environment
-conda activate gfs 
+conda activate gfsnet
 
-# Run with default configuration
-python gfs/trainers/antelope.py
+# Run with default configuration (Gumbel + GAT + classification)
+python -m gfs.trainers.train
+
+# Specify feature selection and backbone
+python -m gfs.trainers.train \
+  backbone=gat feature_selection=stg task=classification \
+  n_select=10 lam=0.1
+```
 
 ## Configuration System
 
-GFSNet uses hydra for hierarchical configuration management.
+GFSNet uses Hydra for hierarchical, composable configuration management.
 
 ### Config Structure
 
-Base configuration: `gfs/configs/antelope.yaml`
+Base configuration: `src/gfs/conf/config.yaml`
+
+Config groups (independently composable):
+- `backbone/` -- GNN architecture (`gat`, `sage`, `gcn`)
+- `feature_selection/` -- gene selection method (`gumbel`, `stg`, `scgist`)
+- `task/` -- prediction head (`classification`, `reconstruction`)
+- `data/` -- dataset and splitting (`hemisphere`)
+- `trainer/` -- training hyperparameters (`default`)
+- `logging/` -- log timing and destinations (`default`)
+
+Global flags (set directly on the command line):
+- `n_select=10` -- number of genes to select
+- `trainmode=0` -- 0=all nodes, 1=seed only
+- `lam=0.1` -- regularization weight for feature selection
+- `halfhop=false` -- HalfHop graph augmentation
 
 ### Overriding Parameters
 
 ```bash
-# Change dataset
-python gfs/trainers/antelope.py \
-  data.file_names='["custom_dataset.h5ad"]'
-
-# Modify model architecture
-python gfs/trainers/antelope.py \
-  model.hid_ch=64 \
-  model.local_layers=3 \
-  model.dropout=0.3
+# Modify backbone architecture
+python -m gfs.trainers.train \
+  backbone.hid_ch=64 \
+  backbone.n_layers=3 \
+  backbone.dropout=0.3
 
 # Try different GNN backbone
-python gfs/trainers/antelope.py \
-  model.gnn="sage"
+python -m gfs.trainers.train backbone=sage
 
-# Use focal loss for imbalanced data
-python gfs/trainers/antelope.py \
-  model.focal_loss=true
+# Use STG feature selection with custom sigma
+python -m gfs.trainers.train \
+  feature_selection=stg \
+  feature_selection.sigma=1.0 \
+  lam=0.05
+
+# Use scGist feature selection
+python -m gfs.trainers.train \
+  feature_selection=scgist \
+  feature_selection.l1=0.2
+
+# Use reconstruction task head
+python -m gfs.trainers.train task=reconstruction
 
 # Quick test run
-python gfs/trainers/antelope.py \
+python -m gfs.trainers.train \
   trainer.limit_train_batches=10 \
   trainer.limit_val_batches=5 \
   trainer.max_epochs=5
@@ -52,44 +77,43 @@ python gfs/trainers/antelope.py \
 Computes loss and metrics on all nodes in each batch (root + neighbors):
 
 ```bash
-python gfs/trainers/antelope.py model.trainmode=0
+python -m gfs.trainers.train trainmode=0
 ```
 
 ### Root-Only Training (`trainmode=1`)
 
-Computes loss and metrics only on root nodes:
+Computes loss and metrics only on seed (root) nodes:
 
 ```bash
-python gfs/trainers/antelope.py model.trainmode=1
+python -m gfs.trainers.train trainmode=1
 ```
 
 ## Output Structure
 
 ### Logs
 
-Training logs saved to: `data/logs/<experiment_name>/`
+Training logs saved to: `logs/<experiment_name>/`
 
 Contents:
 - TensorBoard events
-- `selections.csv` - Gene selections per epoch
 - Metric logs
 
 View with TensorBoard:
 ```bash
-tensorboard --logdir data/logs/
+tensorboard --logdir logs/
 ```
 
 ### Checkpoints
 
-Model checkpoints saved to: `data/checkpoints/<experiment_name>/`
+Model checkpoints saved to: `checkpoints/<experiment_name>/`
 
-Format: `{epoch}-{val_overall_acc:.2f}.ckpt`
+Format: `{epoch}-{val_acc:.2f}.ckpt`
 
 Only the best checkpoint (by validation accuracy) is kept.
 
 ### Predictions
 
-Test predictions saved to: `data/logs/<experiment_name>/test_pred.pt`
+Test predictions saved to: `logs/<experiment_name>/test_pred.pt`
 
 Contents:
 ```python
@@ -111,29 +135,26 @@ labels = results['labels']
 
 ### Gene Selections
 
-Track which genes are selected over training:
+Inspect selected genes at eval time via the feature selector:
 
 ```python
-import pandas as pd
+model.feature_selector.selected_indices()  # tensor of gene indices
+```
 
-selections = pd.read_csv('data/logs/<experiment>/selections.csv')
+For Gumbel selectors, per-slot probabilities are available via:
 
-# View final selections
-final_epoch = selections.iloc[-1]
-selected_genes = [final_epoch[f'sel_{i}'] for i in range(10)]
-selection_probs = [final_epoch[f'prob_{i}'] for i in range(10)]
+```python
+indices, probs = model.feature_selector.get_mask_indices()
 ```
 
 ### Performance Metrics
 
 Extract from TensorBoard logs or final test output:
 
-- `test_overall_acc` - Weighted accuracy
-- `test_macro_acc` - Macro-averaged accuracy
-- `test_micro_acc` - Micro-averaged accuracy
-- `test_f1_overall` - Weighted F1
-- `test_f1_macro` - Macro-averaged F1
-- `test_f1_micro` - Micro-averaged F1
+- `test_acc` -- Weighted accuracy
+- `test_macro_acc` -- Macro-averaged accuracy
+- `test_f1_macro` -- Macro-averaged F1
+- `test_loss` -- Task loss
 
 ## SLURM Job Submission
 
@@ -149,18 +170,41 @@ Extract from TensorBoard logs or final test output:
 #SBATCH -t 7000
 #SBATCH -J gfs_experiment
 
-conda activate gfs
-python gfs/trainers/antelope.py data.prefix="experiment_name"
+conda activate gfsnet
+python -m gfs.trainers.train \
+  expname="experiment_name" \
+  backbone=gat feature_selection=stg task=classification \
+  n_select=20 lam=0.1
 ```
-## Model Variants
 
-### Run Different Models
+## Feature Selection Variants
+
+### Gumbel Softmax (default)
 
 ```bash
-# STG variant
-python gfs/trainers/antelope_stg.py
+python -m gfs.trainers.train feature_selection=gumbel
 ```
-Each variant should have its own config file in `gfs/configs/`.
+
+Uses temperature annealing (`tautype=exp`) by default. Override with:
+```bash
+python -m gfs.trainers.train feature_selection=gumbel feature_selection.tautype=constant
+```
+
+### Stochastic Gates
+
+```bash
+python -m gfs.trainers.train feature_selection=stg lam=0.1
+```
+
+Key parameters: `feature_selection.sigma` (noise scale) and `lam` (sparsity weight).
+
+### scGist
+
+```bash
+python -m gfs.trainers.train feature_selection=scgist lam=0.1
+```
+
+Key parameter: `feature_selection.l1` (binary + panel size regularization weight).
 
 ## Troubleshooting
 
@@ -168,7 +212,7 @@ Each variant should have its own config file in `gfs/configs/`.
 
 Reduce batch size or limit batches:
 ```bash
-python gfs/trainers/antelope.py \
+python -m gfs.trainers.train \
   data.batch_size=32 \
   trainer.limit_train_batches=500
 ```
@@ -176,19 +220,19 @@ python gfs/trainers/antelope.py \
 ### Slow Training
 
 - Use smaller validation set: `trainer.limit_val_batches=50`
-- Reduce GNN depth: `model.local_layers=1`
+- Reduce GNN depth: `backbone.n_layers=1`
 - Decrease neighborhood size: `data.n_hops=1`
 
 ### Poor Convergence
 
-- Check gene selection logs for stability
-- Try different temperature schedule: `model.tautype="constant"`
+- For Gumbel: check that temperature annealing is enabled (`feature_selection.tautype=exp`)
+- For STG/scGist: adjust `lam` to balance classification vs sparsity
 - Increase training epochs: `trainer.max_epochs=1000`
 - Adjust learning rate: `trainer.lr=0.0001`
 
 ### Feature Selection Not Working
 
-- Monitor `selections.csv` - selections should stabilize over time
-- Ensure temperature annealing is enabled: `model.tautype="exp"`
-- Check that `n_select` matches desired panel size
-- Verify sufficient training epochs (500+)
+- Ensure `n_select` matches desired panel size
+- For Gumbel: ensure sufficient epochs (500+) for temperature to anneal
+- For STG: try different `sigma` values (0.5 default, lower = sharper gates)
+- For scGist: increase `feature_selection.l1` if weights are not binarizing

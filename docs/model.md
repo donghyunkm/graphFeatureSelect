@@ -2,238 +2,353 @@
 
 ## Overview
 
-GFSNet uses graph neural networks with differentiable feature selection to learn optimal gene panels for spatial transcriptomics cell type classification. The model is composed of three main parts: a pluggable **feature selection** layer, a **GNN backbone**, and a **prediction head** with optional spatial residual connections.
+GFSNet uses graph neural networks with differentiable feature selection to learn optimal gene panels for spatial transcriptomics cell type classification. The architecture is composed of three independently composable stages:
 
-## Unified Model: GnnFs
+1. **Feature Selection** -- selects a subset of genes via a learnable mask
+2. **GNN Backbone** -- produces node embeddings from masked expression + spatial coordinates
+3. **Task Head** -- maps embeddings to predictions (classification or reconstruction)
 
-Located in `src/gfs/models/backbone.py`
+Each stage is a separate `nn.Module` wired together by the Lightning module (`LitGnnFs`). Stages are configured independently via Hydra config groups (`feature_selection/`, `backbone/`, `task/`), so any feature selector works with any backbone and any task head.
 
-The model accepts a feature selection method via config (`model.fs_method`). The feature selector is instantiated by `get_feature_selector()` in `src/gfs/models/feature_selection/__init__.py` and injected into `GnnFs` at construction time. This means all GNN backbone code is shared — only the feature selection layer differs between variants.
-
-### Architecture Components
+## Architecture Diagram
 
 ```
-Input: gene expression (n_nodes, n_genes) + spatial coords (n_nodes, 3)
-                            │
-                   ┌────────▼────────┐
-                   │ Feature Selector │  ← pluggable: persist / scGist / stg
-                   └────────┬────────┘
-                            │ masked gene expression
-              ┌─────────────┼─────────────┐
-              │             │             │
-        ┌─────▼─────┐ ┌────▼────┐ ┌──────▼──────┐
-        │  x_res MLP │ │ lin_in  │ │  xyz linear │
-        │ (optional) │ │(if pre) │ │  (optional) │
-        └─────┬─────┘ └────┬────┘ └──────┬──────┘
-              │        ┌────▼────┐        │
-              │        │GNN layer│←─ edge_index
-              │        │  + res  │
-              │        │  + norm │
-              │        │  + drop │
-              │        └────┬────┘
-              │             │  × local_layers (with JK skip connections)
-              │        ┌────▼────┐
-              │        │pred_local│
-              │        └────┬────┘
-              │             │
-              └──── + ──────┼──── + ────┘
-                            │
-                      Output logits (n_nodes, n_classes)
+Input: gene_exp (n_nodes, n_genes)    xyz (n_nodes, spatial_ch)    subgraph_id (n_nodes,)
+              |                              |                              |
+     +--------v-----------+                  |                              |
+     | Feature Selector   |                  |                              |
+     | (gumbel/stg/scgist)|                  |                              |
+     +---------+----------+                  |                              |
+               |  masked_exp                 |                              |
+               |  (n_nodes, n_genes)         |                              |
+     +---------v-----------------------------v------------------------------v--------+
+     |                          GNN Backbone                                         |
+     |                                                                               |
+     |   [pre_linear]     gene_ch -> hid_ch                                          |
+     |        |                                                                      |
+     |   [GNN layers]     x N with residual + LayerNorm + dropout + JK               |
+     |        |                                                                      |
+     |   [+ x_res_mlp]    MLP(masked_exp) -> hid_ch         (optional)               |
+     |   [+ xyz_proj]     Linear(centered_xyz) -> hid_ch     (optional)              |
+     |                                                                               |
+     +--------------------------------------+----------------------------------------+
+                                            |  embeddings (n_nodes, hid_ch)
+                                    +-------v--------+
+                                    |   Task Head    |
+                                    | (cls or recon) |
+                                    +-------+--------+
+                                            |
+                                     output (logits or predicted expression)
 ```
-
-**GNN Backbone** — supports three GNN architectures:
-- **GAT** (`GATv2Conv`) — Graph Attention Network (default)
-- **SAGE** (`SAGEConv`) — GraphSAGE
-- **GCN** (`GCNConv`) — Graph Convolutional Network
-
-Configurable features per layer:
-- Residual connections (`res`): `GNN(x) + Linear(x)`
-- Normalization: LayerNorm (`ln`) or BatchNorm (`bn`)
-- JK skip connections (`jk`): sum outputs from all layers
-- Dropout between layers
-
-**Spatial Integration** — optional (`xyz_status: true`):
-- Spatial coordinates are mean-centered per subgraph
-- Linear projection added to final predictions
-- `x_res`: MLP residual from raw gene expression to output
 
 ## Feature Selection Methods
 
-Feature selectors are `nn.Module` subclasses in `src/gfs/models/feature_selection/`. Each exposes a common interface:
+All feature selectors inherit from `FeatureSelector` (abstract base class) and share a common interface:
 
-| Method | `forward(x, tau, subgraph_id)` | `regularization_loss()` | `on_train_epoch_end(...)` |
-|--------|------|------|------|
-| persist | Gumbel-softmax k-hot mask × x | 0 (no reg) | Logs selections to CSV |
-| scGist | continuous logits × x | FeatureRegularizer loss × 100 | — |
-| stg | hard_sigmoid(mu + noise) × x | Gaussian CDF of (mu+0.5)/sigma | Prints mask stats |
+```python
+class FeatureSelector(ABC, nn.Module):
+    def forward(self, x, tau, subgraph_id) -> torch.Tensor:  # masked expression
+    def get_mask(self, tau, subgraph_id) -> torch.Tensor:     # current mask
+    def regularization_loss(self) -> torch.Tensor:            # reg term (default 0)
+    def selected_indices(self) -> torch.Tensor:               # eval-time gene indices
+```
 
-### Persist (Gumbel Softmax)
+**Key design constraint**: all selectors produce **hard binary masks at eval time** (no information leakage through continuous weights). At train time, masks are soft/stochastic for gradient flow.
 
-**File**: `src/gfs/models/feature_selection/gumbel.py: GumbelFeatureSelector`
+| Method | Config | Train mask | Eval mask | Regularization |
+|--------|--------|-----------|-----------|----------------|
+| Gumbel | `feature_selection=gumbel` | Gumbel-softmax k-hot per subgraph | argmax binary k-hot | None (0) |
+| STG | `feature_selection=stg` | hard_sigmoid(mu + noise) per subgraph | top-k by mu, binary | Gaussian CDF sparsity |
+| scGist | `feature_selection=scgist` | continuous logits (broadcast) | top-k by abs(logits), binary | Binary pressure + panel size |
 
-**Mechanism**: Learns `n_select` categorical distributions over genes via a `(n_select, gene_ch)` logits parameter. Each row selects one gene.
+**Source**: `src/gfs/models/feature_selection/`
 
-**Training** — soft k-hot masks via Gumbel-Softmax:
-1. Logits are replicated per subgraph in the batch: `(n_select, n_subgraphs, gene_ch)`
-2. `F.gumbel_softmax(logits, tau=tau)` produces soft one-hot per selection slot
-3. `torch.max(sample, dim=0)` combines slots into a single k-hot mask per subgraph
-4. Mask is broadcast to nodes via `subgraph_id`
+### Gumbel Softmax (`GumbelFeatureSelector`)
 
-**Evaluation** — hard k-hot mask: `argmax` per selection slot, then scatter to binary mask.
+**File**: `src/gfs/models/feature_selection/gumbel.py`
+
+Learns `n_select` categorical distributions over genes via a `(n_select, n_genes)` logits parameter. Each row ("slot") selects one gene.
+
+**Training** -- soft k-hot via Gumbel-Softmax:
+1. Logits are expanded per subgraph: `(n_select, n_subgraphs, n_genes)`
+2. `F.gumbel_softmax(logits, tau=tau, hard=False)` produces a soft one-hot per slot per subgraph
+3. `max(dim=0)` across slots yields a soft k-hot mask per subgraph: `(n_subgraphs, n_genes)`
+4. Mask is broadcast to nodes via `subgraph_id`: `k_hot[subgraph_id]`
+
+**Evaluation** -- hard binary:
+- `argmax` per slot produces `n_select` gene indices
+- Scatter to binary `(1, n_genes)` mask, broadcast to all nodes
 
 **Temperature schedule** (`tautype`):
-- `"exp"`: 10.0 → 0.01 over training (`start * (end/start)^(epoch/total)`)
+- `"exp"`: `10.0 * (0.01 / 10.0)^(epoch / max_epochs)` -- anneals from 10.0 to 0.01
 - `"constant"`: fixed at 0.1
 
-**Tracking**: At each epoch end, gene indices and softmax probabilities are logged to `selections.csv` for monitoring convergence.
-
-### scGist (Continuous Gating)
-
-**File**: `src/gfs/models/feature_selection/gumbel.py: ScGistFeatureSelector`
-
-**Mechanism**: Learns a `(1, gene_ch)` logits parameter initialized to 0.5. Gene expression is simply multiplied by these continuous weights.
-
-**Regularization** via `FeatureRegularizer` (in `src/gfs/models/components.py`):
-- **Binary pressure**: `sum(|w| * |w - 1|)` — pushes weights toward 0 or 1
-- **Panel size**: `|sum(|w|) - n_select| * alpha` — constrains total selected features
-- **Pairwise penalties** (optional): discourages correlated gene pairs
-- Regularization loss is scaled by `l1 * 100`
-
-### STG (Stochastic Gates)
-
-**File**: `src/gfs/models/feature_selection/stg.py: STGFeatureSelector`
-
-**Mechanism**: Learns a `mu` parameter per gene. During training, adds Gaussian noise scaled by `sigma`:
-```
-z = mu + sigma * noise * is_training
-gate = clamp(z + 0.5, 0, 1)    # hard sigmoid
-x_masked = x * gate
+**Config** (`feature_selection/gumbel.yaml`):
+```yaml
+method: "gumbel"
+tautype: "exp"
 ```
 
-**Regularization**: Gaussian CDF evaluated at `(mu + 0.5) / sigma`, averaged over genes. This measures the probability each gate is "open" — minimizing it encourages sparsity. Weighted by `lam` in the total loss.
+### STG -- Stochastic Gates (`STGFeatureSelector`)
 
-**Key parameters**:
-- `sigma`: noise scale (default 0.5 for STG, 1.0 for antelope). Lower sigma = sharper gates.
-- `lam`: regularization weight (default 0.1). Higher = more aggressive pruning.
+**File**: `src/gfs/models/feature_selection/stg.py`
 
-**Device handling**: The `noise` buffer is moved to the correct device via a custom `_apply()` override.
+Learns a `mu` parameter per gene (`n_genes` values). During training, adds independent Gaussian noise per subgraph.
 
-## Lightning Module: LitGnnFs
+**Training**:
+```
+noise ~ N(0, 1)  per subgraph       # (n_subgraphs, n_genes)
+z = mu + sigma * noise
+gate = clamp(z + 0.5, 0, 1)         # hard sigmoid
+masked_x = x * gate[subgraph_id]    # per-node mask via subgraph_id
+```
 
-Located in `src/gfs/models/lit_module.py`
+**Evaluation** -- hard binary:
+- Top-k genes by `mu` value, scatter to binary `(1, n_genes)` mask
 
-Unified Lightning module that works with all feature selection methods. Key design:
+**Regularization**: Gaussian CDF evaluated at `(mu + 0.5) / sigma`, averaged over genes. Penalizes open gates -- minimizing pushes `mu` below the threshold so gates close. Weighted by `lam` in total loss.
 
-**Loss computation** (`_compute_loss`):
+**Config** (`feature_selection/stg.yaml`):
+```yaml
+method: "stg"
+sigma: 0.5       # noise scale; lower = sharper gates
+tautype: "constant"
+```
+
+### scGist -- Continuous Gating (`ScGistFeatureSelector`)
+
+**File**: `src/gfs/models/feature_selection/gumbel.py`
+
+Learns a `(1, n_genes)` logits parameter initialized to 0.5. Simplest selector -- expression is multiplied by continuous weights at train time.
+
+**Training**: `masked_x = x * logits` (continuous, broadcasts over nodes)
+
+**Evaluation** -- hard binary:
+- Top-k genes by `abs(logits)`, scatter to binary `(1, n_genes)` mask
+
+**Regularization** (two terms, weighted by `l1`):
+- **Binary pressure**: `sum(|w| * |w - 1|)` -- pushes weights toward 0 or 1
+- **Panel size**: `|sum(|w|) - n_select|` -- constrains total active features
+
+**Config** (`feature_selection/scgist.yaml`):
+```yaml
+method: "scgist"
+l1: 0.1          # regularization weight for binary + size penalties
+tautype: "constant"
+```
+
+## GNN Backbone (`GNNBackbone`)
+
+**File**: `src/gfs/models/backbone.py`
+
+A standalone module that takes masked gene expression and spatial coordinates, runs them through a configurable GNN stack, and returns node embeddings of dimension `hid_ch`.
+
+### Layer Factory
+
+The `_build_gnn_layer()` factory supports three GNN architectures:
+
+| Type | PyG Class | Notes |
+|------|-----------|-------|
+| `"gat"` | `GATv2Conv` | Attention-based; configurable heads, no self-loops |
+| `"sage"` | `SAGEConv` | Sampling-friendly aggregation |
+| `"gcn"` | `GCNConv` | Spectral convolution, normalized |
+
+### Per-Layer Options
+
+Each GNN layer can optionally include:
+- **Residual connection**: `GNN(x) + Linear(x)` (skip connection with learned projection)
+- **LayerNorm** or **BatchNorm**: normalization after each layer
+- **JK (Jumping Knowledge)**: sum outputs from all layers instead of using only the last
+- **Dropout**: applied after activation
+
+### Spatial Coordinate Centering
+
+When `subgraph_id` is provided, XYZ coordinates are centered per subgraph using scatter-based mean subtraction:
+
 ```python
-total_loss = CE_loss + model.lam * feature_selector.regularization_loss()
+means = scatter_mean(xyz, subgraph_id, dim=0)
+xyz_centered = xyz - means[subgraph_id]
 ```
-- For persist: `regularization_loss()` returns 0, so it's just CE
-- For scGist: adds `FeatureRegularizer` loss
+
+This makes spatial features translation-invariant within each sampled patch.
+
+### Residual Paths
+
+Two optional paths add information to the final GNN output:
+
+- **xyz_proj**: `Linear(spatial_ch -> hid_ch)` -- projects centered spatial coordinates
+- **x_residual**: `MLP(gene_ch -> 128 -> 128 -> hid_ch)` -- residual from masked expression, bypassing the GNN stack
+
+### Config (`backbone/gat.yaml` example):
+
+```yaml
+gnn_type: "gat"
+hid_ch: 32
+n_layers: 2
+dropout: 0.5
+heads: 1
+pre_linear: true
+residual: true
+layer_norm: true
+batch_norm: false
+jk: true
+xyz_proj: true
+x_residual: true
+```
+
+Other backbone configs (`backbone/sage.yaml`, `backbone/gcn.yaml`) swap `gnn_type` and adjust defaults as needed.
+
+## Task Heads
+
+**File**: `src/gfs/models/heads.py`
+
+### Classification Head (`ClassificationHead`)
+
+Single linear layer: `Linear(hid_ch -> n_classes)`. Returns logits.
+
+Config (`task/classification.yaml`):
+```yaml
+name: "classification"
+loss: "ce"
+focal_loss: false
+```
+
+Loss: `nn.CrossEntropyLoss()` (or focal loss when `focal_loss: true`).
+
+### Reconstruction Head (`ReconstructionHead`)
+
+MLP: `Linear -> ReLU -> Linear -> ReLU -> Linear`, mapping `hid_ch` to `n_genes`. Predicts the full (unmasked) expression profile from embeddings. Used to validate that selected genes carry enough information.
+
+Config (`task/reconstruction.yaml`):
+```yaml
+name: "reconstruction"
+hidden: [128, 128]
+```
+
+Loss: `nn.MSELoss()`.
+
+## Lightning Module (`LitGnnFs`)
+
+**File**: `src/gfs/models/lit_module.py`
+
+Wires the three components together and handles training, validation, and test loops.
+
+### Two-Phase Initialization
+
+1. **`__init__(config)`** -- saves hyperparameters but does NOT instantiate model components. At this point `n_genes` and `n_classes` are unknown (they come from data after filtering and label encoding).
+
+2. **`setup_model(n_genes, n_classes)`** -- called by the training script after `DataModule.setup()` provides the actual dimensions. Instantiates:
+   - `self.feature_selector` via `get_feature_selector()` factory
+   - `self.backbone` as `GNNBackbone`
+   - `self.task_head` as `ClassificationHead` or `ReconstructionHead`
+   - Metrics (torchmetrics `MulticlassAccuracy`, `MulticlassF1Score`)
+
+### Forward Pass
+
+```python
+def forward(gene_exp, edge_index, xyz, subgraph_id=None, tau=1.0):
+    masked_exp = self.feature_selector(gene_exp, tau, subgraph_id)
+    embeddings = self.backbone(masked_exp, edge_index, xyz, subgraph_id)
+    return self.task_head(embeddings)
+```
+
+### Loss Computation
+
+```python
+total_loss = task_loss + lam * feature_selector.regularization_loss()
+```
+
+- For Gumbel: `regularization_loss()` returns 0, so total loss is just the task loss
 - For STG: adds `lam * mean(gaussian_cdf(...))`
+- For scGist: adds `lam * l1 * (binary_reg + size_reg)`
 
-**Loss functions**:
-- **Cross-Entropy** (default): `nn.CrossEntropyLoss()`
-- **Focal Loss** (`focal_loss: true`): `sigmoid_focal_loss(alpha=0.25, gamma=2.0)` for imbalanced datasets
+### Tau Scheduling
 
-**Training modes** (`trainmode`):
-- `0`: Backprop/metrics for all nodes in batch (including neighbors)
-- `1`: Backprop/metrics for only root (seed) nodes
+The `tau_schedule()` function computes the Gumbel-softmax temperature at each epoch:
+
+- `"exp"`: `start * (end / start) ^ (epoch / max_epochs)` with start=10.0, end=0.01
+- `"constant"`: fixed at 0.1
+
+Only matters for Gumbel feature selection; STG and scGist ignore tau.
+
+### Seed-Node-Only Evaluation
+
+At validation and test time, loss and metrics are computed only on seed (root) nodes. `NeighborLoader` places seed nodes at indices `0..batch_size-1` in each batch, accessed via `batch.input_id.size(0)`.
+
+At train time, `trainmode` controls behavior:
+- `trainmode=0`: loss on all nodes with `train_mask`
+- `trainmode=1`: loss on seed nodes only
+
+### DRY Logging
+
+All metrics flow through `_log_metrics()`, which reads logging options from the `logging` config group:
+
+```yaml
+# logging/default.yaml
+on_step: false
+on_epoch: true
+prog_bar: true
+logger: true
+```
 
 ### Metrics
 
 | Split | Metrics |
 |-------|---------|
-| Train | weighted accuracy, macro accuracy |
-| Val | weighted accuracy, macro accuracy, CE loss |
-| Test | weighted/macro/micro accuracy, weighted/macro/micro F1 |
+| Train | weighted accuracy, macro accuracy, loss, reg_loss, tau |
+| Val | weighted accuracy, macro accuracy, loss |
+| Test | weighted accuracy, macro accuracy, macro F1, loss |
 
-Test predictions and labels are saved to `test_pred.pt` at the end of testing.
+### Optimizer
 
-## Data Pipeline
-
-### PyGAnnData (`src/gfs/data/hemisphere.py`)
-
-Converts AnnData objects to PyTorch Geometric format:
-
-**Input**: AnnData (`.h5ad`) with:
-- `.X`: Gene expression matrix (n_cells x n_genes), dense or sparse
-- `.obs[cell_type]`: Cell type labels (categorical)
-- `.obs[spatial_coords]`: Spatial coordinates (e.g. x_section, y_section, z_section)
-- `.obsp['spatial_connectivities']`: Precomputed spatial neighbor graph
-
-**Preprocessing**:
-- Filters blank genes (names starting with "Blank")
-- Removes cell types with < 5 cells
-- Encodes cell types with `LabelEncoder`
-- Computes binary adjacency (self-loops removed unless `self_loops_only`)
-
-**Train/val/test split**: `StratifiedKFold3` — a custom 3-way stratified split:
-1. Standard `StratifiedKFold` produces train/test
-2. Train is further split into train/val using `train_test_split`
-3. Indexed by `cv` parameter (0 to n_splits-1)
-
-**Output**: `PyGData` with:
-- `x`: `[gene_exp | xyz]` concatenated (n_nodes, n_genes + 3)
-- `edge_index`: Graph connectivity
-- `celltype`: Encoded labels
-- `gene_exp_ind`, `xyz_ind`: Index tensors to slice `x` back apart
-- `train_mask`, `val_mask`, `test_mask`: Boolean split indicators
-
-### Batching: NeighborLoaderMod
-
-Wraps PyG's `NeighborLoader` to add `subgraph_id` — assigns each node to the seed node whose k-hop neighborhood it belongs to. This is needed for per-subgraph Gumbel-Softmax mask generation.
-
-- Samples `[-1] * n_hops` neighbors (all neighbors at each hop)
-- Default: 2-hop neighborhoods, batch_size=64
-
-### HalfHop Transform (`src/gfs/models/transforms.py`)
-
-Graph upsampling augmentation that slows message passing:
-1. Randomly selects edges with probability `p`
-2. Inserts "slow nodes" on selected edges with interpolated features: `alpha * x_src + (1-alpha) * x_dst`
-3. Replaces original edges with two edges through the slow node
-4. After forward pass, slow nodes are removed via `slow_node_mask`
-
-Controlled by `model.halfhop` config parameter (default: true).
+Adam with configurable learning rate. Optional `MultiStepLR` scheduler (milestones at epoch 100, gamma 0.1) when `trainer.lr_scheduler: "multistep"`.
 
 ## Configuration
 
-Hydra composable configs under `src/gfs/conf/`. Switch variants with:
-```bash
-python -m gfs.trainers.train model=antelope         # Gumbel softmax
-python -m gfs.trainers.train model=antelope_stg      # Stochastic Gates
+Hydra composable config groups under `src/gfs/conf/`:
+
+```
+src/gfs/conf/
+  config.yaml               # defaults + global flags
+  backbone/
+    gat.yaml                 # GATv2Conv defaults
+    sage.yaml                # SAGEConv defaults
+    gcn.yaml                 # GCNConv defaults
+  feature_selection/
+    gumbel.yaml              # Gumbel-softmax
+    stg.yaml                 # Stochastic Gates
+    scgist.yaml              # scGist continuous
+  task/
+    classification.yaml      # Linear head + CE loss
+    reconstruction.yaml      # MLP head + MSE loss
+  data/
+    hemisphere.yaml          # Inductive hemisphere split
+  trainer/
+    default.yaml             # Epochs, LR, batch limits
+  logging/
+    default.yaml             # Log timing and destinations
 ```
 
-Key model parameters (`conf/model/antelope.yaml`):
-
+**Global flags** in `config.yaml`:
 ```yaml
-model:
-  gene_ch: ${data.n_genes}    # Resolved from data config (500)
-  spatial_ch: 3               # Spatial dimensions (x, y, z)
-  hid_ch: 32                  # Hidden dimension
-  out_ch: ${data.n_labels}    # Resolved from data config (158)
-  n_select: 10                # Number of genes to select
-  local_layers: 2             # GNN depth
-  dropout: 0.5                # Dropout rate
-  heads: 1                    # Attention heads (GAT only)
-  gnn: "gat"                  # "gat", "sage", or "gcn"
-  fs_method: "persist"        # "persist", "scGist", or "stg"
-  tautype: "exp"              # Temperature schedule: "exp" or "constant"
-  focal_loss: false           # Use focal loss for imbalanced data
-  sigma: 1.0                  # STG noise scale
-  lam: 0.1                    # Regularization weight
-  halfhop: true               # HalfHop augmentation
-  trainmode: 0                # 0=all nodes, 1=root only
-  x_res: true                 # Gene expression residual connection
-  xyz_status: true            # Spatial coordinate integration
+n_select: 10       # number of genes to select
+trainmode: 0       # 0=all nodes, 1=seed only
+halfhop: false     # HalfHop graph augmentation
+lam: 0.1           # feature selection regularization weight
+```
+
+Compose any combination on the command line:
+```bash
+python -m gfs.trainers.train \
+  backbone=gat feature_selection=stg task=classification \
+  n_select=20 lam=0.05
 ```
 
 ## Important Implementation Notes
 
-- Seed nodes are the root nodes in each batch; neighbors are included for message passing
-- The `subgraph_id` field tracks which seed node each neighbor belongs to
-- Gumbel-Softmax masks are generated independently per subgraph during training
-- Gene selections are logged per epoch to `selections.csv` for monitoring convergence
-- Temperature annealing is critical for persist feature selection to converge to discrete selections
-- The `lam` parameter balances classification accuracy vs feature sparsity for STG/scGist
+- **`subgraph_id`**: Every node in a `NeighborLoader` batch is assigned to its seed node's subgraph. This is critical for Gumbel and STG to generate one mask per subgraph (uniform within patches).
+- **Seed nodes first**: `NeighborLoader` places seed nodes at batch indices `0..input_id.size(0)-1`. The Lightning module uses this convention for seed-node-only eval.
+- **Hard binary masks at eval**: All three feature selectors produce deterministic binary masks at eval time. This is a design constraint to prevent information leakage through continuous mask values.
+- **Inductive split**: Train data uses one hemisphere, test uses the other. The split is done at the data level (separate h5ad files), not via masks in the training code.
+- **Scatter-based XYZ centering**: Spatial coordinates are mean-centered per subgraph, making the model invariant to absolute position within the section.
+- **Two-phase init**: `LitGnnFs.__init__()` only saves config; `setup_model()` builds the actual modules after data dimensions are known. This avoids hardcoding gene/class counts in config.

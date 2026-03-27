@@ -12,109 +12,100 @@ The main entry point is:
 `src/gfs/trainers/train.py`
 
 Feature selection method is selected via Hydra config:
-- `model=antelope` (Gumbel softmax / scGist)
-- `model=antelope_stg` (Stochastic Gates)
+- `feature_selection=gumbel` (Gumbel softmax)
+- `feature_selection=stg` (Stochastic Gates)
+- `feature_selection=scgist` (scGist continuous gating)
 
 ---
+
+## Architecture
+
+Three composable stages, independently configurable via Hydra config groups:
+
+```
+Gene expression (n_nodes, n_genes) + spatial coords (n_nodes, 2)
+         │
+   ┌─────▼──────┐
+   │  Feature    │  ← backbone/: gat, sage, gcn
+   │  Selection  │     Hard binary masks at eval
+   └─────┬──────┘
+         │ masked expression (n_nodes, n_genes)
+   ┌─────▼──────┐
+   │    GNN     │  ← feature_selection/: gumbel, stg, scgist
+   │  Backbone  │     Scatter-based XYZ centering
+   └─────┬──────┘
+         │ node embeddings (n_nodes, hid_ch)
+   ┌─────▼──────┐
+   │   Task     │  ← task/: classification, reconstruction
+   │   Head     │
+   └─────┬──────┘
+         │ predictions
+```
+
+### Key design constraints
+1. **Hard binary masks at val/test** — all selectors produce 0/1 masks at eval
+2. **Uniform mask within subgraphs** — all nodes in a patch share one mask
+3. **Seed-node-only eval** — only central node counts for val/test metrics
+4. **Inductive hemisphere split** — train on one hemisphere, test on the other
+5. **Modular task heads** — classification and reconstruction, composable via Hydra
 
 ## Project Structure
 
 ```
 gfsnet/
 ├── src/
-│   └── gfs/                        # Main package
-│       ├── __init__.py
-│       ├── conf/                    # Hydra config (composable groups)
-│       │   ├── config.yaml          # top-level defaults list
-│       │   ├── data/
-│       │   │   └── hemisphere.yaml
-│       │   ├── model/
-│       │   │   ├── antelope.yaml
-│       │   │   └── antelope_stg.yaml
-│       │   ├── trainer/
-│       │   │   └── default.yaml
-│       │   └── logging/
-│       │       └── default.yaml
+│   └── gfs/
+│       ├── conf/                        # Hydra config
+│       │   ├── config.yaml              # Top-level defaults + global flags
+│       │   ├── data/hemisphere.yaml     # Data paths and loading config
+│       │   ├── backbone/                # GNN architecture (gat, sage, gcn)
+│       │   ├── feature_selection/       # Selection method (gumbel, stg, scgist)
+│       │   └── task/                    # Task head (classification, reconstruction)
 │       ├── data/
-│       │   ├── __init__.py
-│       │   └── hemisphere.py        # PyGAnnData, DataModule
+│       │   ├── dataset.py              # PyGAnnData: h5ad → PyG Data
+│       │   ├── datamodule.py           # HemisphereDataModule (Lightning)
+│       │   └── hemisphere.py           # Legacy data loading (reference)
 │       ├── models/
-│       │   ├── __init__.py
-│       │   ├── backbone.py          # GnnFs (unified GNN + feature selection)
-│       │   ├── lit_module.py        # LitGnnFs Lightning module (unified)
-│       │   ├── components.py        # MLP, FeatureRegularizer
-│       │   ├── feature_selection/
-│       │   │   ├── __init__.py      # registry / factory
-│       │   │   ├── gumbel.py        # persist/scGist (Gumbel softmax mask)
-│       │   │   └── stg.py           # STG FeatureSelector
-│       │   ├── samplers/            # Differentiable sampling schemes
-│       │   │   └── ...
-│       │   ├── stg/                 # Original STG layers/utils (kept for reference)
-│       │   │   ├── layers.py
-│       │   │   └── utils.py
-│       │   └── transforms.py        # HalfHop
-│       ├── trainers/
-│       │   ├── __init__.py
-│       │   └── train.py             # Single unified entry point
-│       └── utils.py
-├── scripts/                         # SLURM job scripts
-│   ├── main.sh
-│   └── mainconfig.sh
-├── docs/                            # Documentation
-│   ├── dev.md
-│   ├── model.md
-│   ├── experiments.md
-│   └── data-description.md
-├── tests/                           # Test suite
-│   ├── test_imports.py
-│   ├── test_config.py
-│   ├── test_model_assembly.py
-│   └── test_lit_module.py
-├── pyproject.toml                   # Package config (Hatchling + uv, src layout)
-├── config.toml                      # Runtime paths
-├── CLAUDE.md
-└── README.md
+│       │   ├── feature_selection/      # FeatureSelector ABC + implementations
+│       │   │   ├── base.py             # Abstract base class
+│       │   │   ├── gumbel.py           # Gumbel + scGist selectors
+│       │   │   └── stg.py             # STG selector
+│       │   ├── backbone.py            # GNNBackbone (GAT/SAGE/GCN)
+│       │   ├── heads.py               # ClassificationHead, ReconstructionHead
+│       │   └── lit_module.py          # LitGnnFs (Lightning module)
+│       └── trainers/
+│           └── train.py               # Hydra entry point
+├── tests/                              # Integration tests (90 total)
+│   ├── test_data_pipeline.py          # Data loading, shapes, splits (10)
+│   ├── test_feature_selection.py      # All selectors, masks, gradients (58)
+│   ├── test_backbone.py              # GNN, heads, full pipeline (16)
+│   └── test_end_to_end.py            # Training loops, all methods (6)
+├── refactor/                           # Design docs
+│   ├── design.md                      # Architecture and constraints
+│   ├── data.md                        # Data format and preprocessing
+│   ├── model.md                       # Component interfaces
+│   ├── dataloader.md                  # Batch format and sampling
+│   └── todo.md                        # Progress checklist
+├── data/
+│   ├── raw/                           # Raw h5ad files
+│   └── dev/                           # Dev dataset (single section)
+├── notebooks/                          # Preprocessing scripts
+├── docs/                              # User-facing documentation
+│   ├── model.md                       # Architecture reference
+│   ├── experiments.md                 # Running experiments
+│   ├── dev.md                         # Environment setup
+│   └── data.md                        # Dataset description
+├── pyproject.toml                     # Package config (Hatchling + uv)
+└── CLAUDE.md
 ```
 
 ## Documentation
 
-- **[Development Guide](docs/dev.md)** - Environment setup, build system, code style
-- **[Model Architecture](docs/model.md)** - Model variants, training details, feature selection methods
-- **[Running Experiments](docs/experiments.md)** - Configuration, cross-validation, output analysis
-- **[Data Description](docs/data-description.md)** - Dataset information
-
-## Core Components
-
-### Unified Model
-
-Single GNN model (`models/backbone.py: GnnFs`) with composable feature selection:
-- **persist** - Gumbel softmax k-hot mask (`feature_selection/gumbel.py`)
-- **scGist** - Continuous logits with regularizer (`feature_selection/gumbel.py`)
-- **stg** - Stochastic Gates (`feature_selection/stg.py`)
-
-Feature selection method is chosen via config (`model.fs_method`) and instantiated by `feature_selection/__init__.py: get_feature_selector()`.
-
-### Data Pipeline
-
-- Converts AnnData (h5ad) to PyTorch Geometric format
-- Spatial graph construction with k-hop neighborhoods
-- Stratified k-fold cross-validation (5 folds)
-- Mini-batch sampling with `NeighborLoader`
-
-### Configuration
-
-Uses Hydra with composable config groups:
-
-```yaml
-# Override model variant:
-python -m gfs.trainers.train model=antelope
-python -m gfs.trainers.train model=antelope_stg
-
-# Override specific params:
-python -m gfs.trainers.train model.n_select=20 trainer.max_epochs=100
-```
-
-See [docs/experiments.md](docs/experiments.md) for complete configuration options.
+- **[docs/model.md](docs/model.md)** — Model architecture reference
+- **[docs/experiments.md](docs/experiments.md)** — Running experiments and configuration
+- **[docs/dev.md](docs/dev.md)** — Environment setup, build system, code style
+- **[docs/data.md](docs/data.md)** — Dataset description
+- **[refactor/](refactor/)** — Design docs (architecture, data, model, dataloader, progress)
 
 ## Environment
 
@@ -122,10 +113,24 @@ See [docs/experiments.md](docs/experiments.md) for complete configuration option
 - Package manager: **uv** (not pip)
 - Install: `conda activate gfsnet && uv pip install -e ".[dev,mldep,data]"`
 - Run: `conda run -n gfsnet python ...`
+- Tests: `conda run -n gfsnet python -m pytest`
+
+## Running
+
+```bash
+# Default (GAT + Gumbel + classification)
+python -m gfs.trainers.train
+
+# Switch components
+python -m gfs.trainers.train backbone=sage feature_selection=stg task=classification
+
+# Override parameters
+python -m gfs.trainers.train backbone.hid_ch=64 n_select=20 feature_selection.sigma=0.3
+```
 
 ## Tech Stack
 
-- **PyTorch**, **PyTorch Geometric**, **Lightning** - Deep learning
-- **Hydra** - Configuration management
-- **AnnData** - Spatial transcriptomics data
-- **Hatchling + uv** - Modern Python packaging (src layout)
+- **PyTorch**, **PyTorch Geometric**, **Lightning** — Deep learning
+- **Hydra** — Configuration management
+- **AnnData** — Spatial transcriptomics data
+- **Hatchling + uv** — Modern Python packaging (src layout)
