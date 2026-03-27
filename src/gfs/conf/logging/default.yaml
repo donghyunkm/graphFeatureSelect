@@ -1,5 +1,3 @@
-log_dir: "logs"
-checkpoint_dir: "checkpoints"
 on_step: false
 on_epoch: true
 prog_bar: true

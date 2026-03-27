@@ -1,3 +1,1 @@
 name: "classification"
-loss: "ce"
-focal_loss: false
