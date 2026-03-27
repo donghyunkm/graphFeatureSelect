@@ -79,6 +79,11 @@ packages = ["src/gfs"]
 allow-direct-references = true
 
 
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests that train models for many epochs (deselect with '-m \"not slow\"')",
+]
+
 [tool.ruff]
 line-length = 120
 include = ["*.py", "*.pyi", "**/pyproject.toml", "*.ipynb"]
