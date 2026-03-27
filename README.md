@@ -1,25 +1,15 @@
 # GFSNet
 
-GFSNet learns optimal gene panels for spatial transcriptomics using graph neural networks with differentiable feature selection. The system helps neuroscientists select which genes to measure (typically 10-50) in post-hoc profiling experiments.
+### Problem
+Neuroscience experiments that measure cellular activity or morphology in the brain can now be followed by a profiling step to determine the transcriptomic types of the recorded cells. Due to experimental constraints, this profiling step can only reliably measure the expression of a small number of genes (~10–20). Choosing which genes to include in this panel is therefore critical: a well-chosen set enables accurate cell type assignment.
 
-The broad goal is to go over different variants of feature selection layers and graph neural network implementations for the classification task.
+Existing computational methods select gene panels using reference single-cell RNA-seq atlases, treating each cell's expression profile independently. They do not account for the anatomical context in which the profiling is performed. Namely, the expression profiles of neighboring cells. This is a missed opportunity, because the profiling step captures gene expression not only for the cells of interest but for all surrounding cells as well.
 
-The main entry points for the current scope are:
-`trainers/antelope.py`
-`trainers/antelope_stg.py`
+### Approach
+We leverage recent spatial transcriptomic atlases of the brain to develop a graph neural network (GNN) that selects gene panels while accounting for anatomical context. The model considers:
 
-# Notes on graph construction
+1. Expression profiles of the transcriptomic types of interest. 
+2. Neighborhood context - expression profiles of nearby cells captured during profiling.
+3. (optionally) spatial location of cell bodies within the brain.
 
-Use this to construct the KNN graph on which the GNN operates. A is the adjacency matrix.
-The data is actually only 2d (per section). Once the user tells you what the within-section co-ordinates are:
-
-```python
-from sklearn.neighbors import kneighbors_graph
-from scipy.sparse import csr_matrix
-
-k = 20
-xy = np.stack((data.obs['x_section'], data.obs['y_section']), axis=1)
-A = kneighbors_graph(xy, k, mode='connectivity', include_self=False)
-A = csr_matrix(A)
-data.obsp['spatial_connectivities'] = A
-```
+By formulating the problem over a spatial graph, our approach naturally incorporates information from neighboring cells and is robust to segmentation noise, a known issue in current spatial atlases. We also provide theoretical guarantees that the graph-based formulation performs at least as well as context-free (tabular) selection methods. 
