@@ -1,0 +1,12 @@
+gnn_type: "sage"
+hid_ch: 32
+n_layers: 2
+dropout: 0.5
+heads: 1
+pre_linear: true
+residual: true
+layer_norm: true
+batch_norm: false
+jk: false
+xyz_proj: false
+x_residual: false

@@ -1,22 +1,18 @@
-from gfs.models.feature_selection.gumbel import GumbelFeatureSelector, ScGistFeatureSelector
-from gfs.models.feature_selection.stg import STGFeatureSelector
+from .base import FeatureSelector
+from .gumbel import GumbelFeatureSelector, ScGistFeatureSelector
+from .stg import STGFeatureSelector
 
 
-def get_feature_selector(fs_method, **kwargs):
-    if fs_method == "persist":
-        return GumbelFeatureSelector(
-            n_select=kwargs["n_select"],
-            gene_ch=kwargs["gene_ch"],
-        )
-    elif fs_method == "scGist":
+def get_feature_selector(fs_method: str, n_genes: int, n_select: int, **kwargs) -> FeatureSelector:
+    if fs_method == "gumbel":
+        return GumbelFeatureSelector(n_genes=n_genes, n_select=n_select)
+    elif fs_method == "scgist":
         return ScGistFeatureSelector(
-            gene_ch=kwargs["gene_ch"],
-            n_select=kwargs["n_select"],
+            n_genes=n_genes, n_select=n_select, l1=kwargs.get("l1", 0.1)
         )
     elif fs_method == "stg":
         return STGFeatureSelector(
-            input_dim=kwargs["gene_ch"],
-            sigma=kwargs["sigma"],
+            n_genes=n_genes, n_select=n_select, sigma=kwargs.get("sigma", 0.5)
         )
     else:
         raise ValueError(f"Unknown feature selection method: {fs_method}")

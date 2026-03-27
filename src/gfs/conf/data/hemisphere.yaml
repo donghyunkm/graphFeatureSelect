@@ -1,21 +1,12 @@
-name: "one_hemisphere"
-file_names:
-  - "one_section_hemi_0926.h5ad"
-test_names:
-  - "test.h5ad"
-n_genes: 500
-n_labels: 158
-cell_type: "subclass"
-spatial_coords:
-  - "x_section"
-  - "y_section"
-  - "z_section"
-self_loops_only: false
+train_path: "data/dev/section_1199651094_original.h5ad"
+test_path: "data/dev/section_1199651094_reflected.h5ad"
+cell_type_col: "AIT33_subclass"
+spatial_cols:
+  - "center_x"
+  - "center_y"
+min_cells: 5
+val_frac: 0.15
 batch_size: 64
 n_hops: 2
-num_workers: 16
-d_threshold: 1000
-n_splits: 5
-cv: -1
-rand_seed: 42
-prefix: "test"
+num_workers: 4
+seed: 42

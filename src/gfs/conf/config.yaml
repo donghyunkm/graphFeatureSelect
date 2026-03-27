@@ -1,8 +1,16 @@
 defaults:
   - data: hemisphere
-  - model: antelope
+  - backbone: gat
+  - feature_selection: gumbel
+  - task: classification
   - trainer: default
   - logging: default
   - _self_
 
 expname: "default"
+
+# Global flags
+n_select: 10
+trainmode: 0  # 0=all nodes, 1=seed only
+halfhop: false
+lam: 0.1  # regularization weight for feature selection
