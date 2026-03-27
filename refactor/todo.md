@@ -61,5 +61,14 @@
 
 - [x] Minimal training entry point (`trainers/train.py`)
 - [x] End-to-end test: train on dev data for a few epochs
+- [x] Update CLAUDE.md with new structure
+- [x] Update docs/ and refactor/ with current state
 - [ ] Archive old src/gfs/ code (or remove dead code: stg/, get_sampler.py, samplers/)
-- [ ] Update CLAUDE.md with new structure
+
+## Future work
+
+- [ ] Per-subgraph mask assignment via NeighborLoaderMod or equivalent (currently defaults to single subgraph)
+- [ ] HalfHop transform integration
+- [ ] Focal loss option in classification head
+- [ ] Multi-task training (joint classification + reconstruction)
+- [ ] Scale to full dataset (multiple sections)
