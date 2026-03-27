@@ -85,21 +85,18 @@ gfsnet/
 │       ├── test_feature_recovery.py  # Gumbel/STG/scGist recover informative features
 │       ├── test_baseline.py          # Learned mask beats random baseline
 │       └── test_tau_behavior.py      # Temperature/noise controls sharpness
-├── refactor/                           # Design docs
-│   ├── design.md                      # Architecture and constraints
-│   ├── data.md                        # Data format and preprocessing
-│   ├── model.md                       # Component interfaces
-│   ├── dataloader.md                  # Batch format and sampling
-│   └── todo.md                        # Progress checklist
 ├── data/
 │   ├── raw/                           # Raw h5ad files
 │   └── dev/                           # Dev dataset (single section)
 ├── notebooks/                          # Preprocessing scripts
-├── docs/                              # User-facing documentation
-│   ├── model.md                       # Architecture reference
-│   ├── experiments.md                 # Running experiments
-│   ├── dev.md                         # Environment setup
-│   └── data.md                        # Dataset description
+├── docs/                              # Documentation
+│   ├── model.md                       # Model architecture reference
+│   ├── data.md                        # Dataset format and preprocessing
+│   ├── dataloader.md                  # Subgraph sampling and batch format
+│   ├── design.md                      # Architecture constraints and testing philosophy
+│   ├── experiments.md                 # Running experiments and configuration
+│   ├── dev.md                         # Environment setup and code style
+│   └── todo.md                        # Progress checklist
 ├── pyproject.toml                     # Package config (Hatchling + uv)
 └── CLAUDE.md
 ```
@@ -107,10 +104,12 @@ gfsnet/
 ## Documentation
 
 - **[docs/model.md](docs/model.md)** — Model architecture reference
+- **[docs/data.md](docs/data.md)** — Dataset format and preprocessing
+- **[docs/dataloader.md](docs/dataloader.md)** — Subgraph sampling and batch format
+- **[docs/design.md](docs/design.md)** — Architecture constraints and testing philosophy
 - **[docs/experiments.md](docs/experiments.md)** — Running experiments and configuration
 - **[docs/dev.md](docs/dev.md)** — Environment setup, build system, code style
-- **[docs/data.md](docs/data.md)** — Dataset description
-- **[refactor/](refactor/)** — Design docs (architecture, data, model, dataloader, progress)
+- **[docs/todo.md](docs/todo.md)** — Progress checklist
 
 ## Environment
 
