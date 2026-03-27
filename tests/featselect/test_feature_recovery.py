@@ -8,7 +8,8 @@ that at least half the selected features are from the informative set.
 import pytest
 import torch
 
-from gfs.models.feature_selection.gumbel import GumbelFeatureSelector, ScGistFeatureSelector
+from gfs.models.feature_selection.gumbel import GumbelFeatureSelector
+from gfs.models.feature_selection.scgist import ScGistFeatureSelector
 from gfs.models.feature_selection.stg import STGFeatureSelector
 
 from tests.featselect.conftest import train_gated_mlp

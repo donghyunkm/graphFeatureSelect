@@ -1,5 +1,6 @@
 from .base import FeatureSelector
-from .gumbel import GumbelFeatureSelector, ScGistFeatureSelector
+from .gumbel import GumbelFeatureSelector
+from .scgist import ScGistFeatureSelector
 from .stg import STGFeatureSelector
 
 

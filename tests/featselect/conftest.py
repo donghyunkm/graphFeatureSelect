@@ -4,6 +4,13 @@ import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
 
 
+def _tau_schedule(epoch, max_epochs):
+    """Exponential tau annealing: 10.0 -> 0.01 (matches lit_module.tau_schedule)."""
+    start, end = 10.0, 0.01
+    progress = epoch / max(max_epochs, 1)
+    return start * (end / start) ** progress
+
+
 class GatedMLP(nn.Module):
     """Test harness: feature selector + MLP classifier."""
     def __init__(self, selector, n_features, n_classes):
@@ -14,14 +21,15 @@ class GatedMLP(nn.Module):
             nn.ReLU(),
             nn.Linear(32, n_classes),
         )
+        self._tau = 0.1  # default, overridden during training
 
     def forward(self, x):
         subgraph_id = torch.zeros(x.size(0), dtype=torch.long, device=x.device)
-        masked = self.selector(x, tau=0.1, subgraph_id=subgraph_id)
+        masked = self.selector(x, tau=self._tau, subgraph_id=subgraph_id)
         return self.mlp(masked)
 
 
-def train_gated_mlp(selector, data, epochs=150, lr=1e-3, lam=0.0):
+def train_gated_mlp(selector, data, epochs=150, lr=1e-3, lam=0.0, anneal_tau=True):
     """Train a GatedMLP and return the trained model."""
     model = GatedMLP(selector, n_features=100, n_classes=10)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -32,6 +40,8 @@ def train_gated_mlp(selector, data, epochs=150, lr=1e-3, lam=0.0):
 
     for epoch in range(epochs):
         model.train()
+        if anneal_tau:
+            model._tau = _tau_schedule(epoch, epochs)
         for xb, yb in loader:
             optimizer.zero_grad()
             logits = model(xb)
