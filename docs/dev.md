@@ -135,8 +135,14 @@ The following rules are intentionally ignored:
 ### Running Tests
 
 ```bash
-# Run all tests (90 integration tests)
+# Run all tests (101 total: 90 integration + 11 functional feature selection)
 conda run -n gfsnet python -m pytest
+
+# Skip slow tests (feature selection training tests)
+conda run -n gfsnet python -m pytest -m "not slow"
+
+# Run only feature selection functional tests
+conda run -n gfsnet python -m pytest tests/featselect/ -v
 
 # Run specific test file
 conda run -n gfsnet python -m pytest tests/test_data_pipeline.py -v

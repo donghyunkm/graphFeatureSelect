@@ -75,11 +75,16 @@ gfsnet/
 │       │   └── lit_module.py          # LitGnnFs (Lightning module)
 │       └── trainers/
 │           └── train.py               # Hydra entry point
-├── tests/                              # Integration tests (90 total)
+├── tests/                              # Tests (101 total)
 │   ├── test_data_pipeline.py          # Data loading, shapes, splits (10)
 │   ├── test_feature_selection.py      # All selectors, masks, gradients (58)
 │   ├── test_backbone.py              # GNN, heads, full pipeline (16)
-│   └── test_end_to_end.py            # Training loops, all methods (6)
+│   ├── test_end_to_end.py            # Training loops, all methods (6)
+│   └── featselect/                    # Functional feature selection tests (11)
+│       ├── conftest.py               # GatedMLP harness, toy_data fixture
+│       ├── test_feature_recovery.py  # Gumbel/STG/scGist recover informative features
+│       ├── test_baseline.py          # Learned mask beats random baseline
+│       └── test_tau_behavior.py      # Temperature/noise controls sharpness
 ├── refactor/                           # Design docs
 │   ├── design.md                      # Architecture and constraints
 │   ├── data.md                        # Data format and preprocessing
@@ -113,7 +118,7 @@ gfsnet/
 - Package manager: **uv** (not pip)
 - Install: `conda activate gfsnet && uv pip install -e ".[dev,mldep,data]"`
 - Run: `conda run -n gfsnet python ...`
-- Tests: `conda run -n gfsnet python -m pytest`
+- Tests: `conda run -n gfsnet python -m pytest` (use `-m "not slow"` to skip training-heavy tests)
 
 ## Running
 

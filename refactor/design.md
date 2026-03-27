@@ -118,6 +118,8 @@ Examples:
 
 Tests live in `tests/` and run with `pytest`. They share a common fixture that loads the dev dataset once.
 
+Additionally, `tests/featselect/` contains functional tests that verify feature selectors on synthetic data (via `make_classification`). These test recovery of informative features, comparison against random baselines, and temperature/noise parameter behavior. Marked `@pytest.mark.slow` since they train small models.
+
 ## Approach
 
 Clean rewrite from these abstractions. Archive `src/gfs/` as `src/gfs_archive/` for reference. Build incrementally with integration tests at each step, using real data from `data/dev/`.

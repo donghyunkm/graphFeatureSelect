@@ -65,6 +65,15 @@
 - [x] Update docs/ and refactor/ with current state
 - [ ] Archive old src/gfs/ code (or remove dead code: stg/, get_sampler.py, samplers/)
 
+## Functional feature selection tests
+
+- [x] Shared test harness: `GatedMLP`, `train_gated_mlp`, `eval_accuracy` (`tests/featselect/conftest.py`)
+- [x] Synthetic `toy_data` fixture: `make_classification` (5000 samples, 100 features, 10 informative, 10 classes)
+- [x] Feature recovery tests: Gumbel/STG/scGist recover >= 5/10 informative features (`test_feature_recovery.py`)
+- [x] Baseline tests: MLP accuracy sanity + learned mask beats random mask (`test_baseline.py`)
+- [x] Tau/sigma behavior tests: temperature controls sharpness, gates bounded [0,1] (`test_tau_behavior.py`)
+- [x] pytest `slow` marker for training-heavy tests (`pyproject.toml`)
+
 ## Future work
 
 - [ ] Per-subgraph mask assignment via NeighborLoaderMod or equivalent (currently defaults to single subgraph)
