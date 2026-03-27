@@ -18,15 +18,11 @@ class GumbelFeatureSelector(FeatureSelector):
         super().__init__(n_genes, n_select)
         self.logits = nn.Parameter(torch.randn(n_select, n_genes))
 
-    def forward(
-        self, x: torch.Tensor, tau: float, subgraph_id: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, tau: float, subgraph_id: torch.Tensor) -> torch.Tensor:
         mask = self.get_mask(tau, subgraph_id)
         return mask * x
 
-    def get_mask(
-        self, tau: float = 1.0, subgraph_id: torch.Tensor | None = None
-    ) -> torch.Tensor:
+    def get_mask(self, tau: float = 1.0, subgraph_id: torch.Tensor | None = None) -> torch.Tensor:
         if self.training:
             n_subgraphs = subgraph_id.max().item() + 1
             # One Gumbel sample per subgraph per slot
@@ -52,5 +48,3 @@ class GumbelFeatureSelector(FeatureSelector):
         mask_indices = torch.argmax(probs, dim=1)
         mask_probs = torch.gather(probs, dim=1, index=mask_indices.unsqueeze(1))
         return mask_indices, mask_probs.squeeze()
-
-

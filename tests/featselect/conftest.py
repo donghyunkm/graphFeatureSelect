@@ -1,7 +1,7 @@
 import pytest
 import torch
 import torch.nn as nn
-from torch.utils.data import TensorDataset, DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 
 
 def _tau_schedule(epoch, max_epochs):
@@ -13,6 +13,7 @@ def _tau_schedule(epoch, max_epochs):
 
 class GatedMLP(nn.Module):
     """Test harness: feature selector + MLP classifier."""
+
     def __init__(self, selector, n_features, n_classes):
         super().__init__()
         self.selector = selector
@@ -69,14 +70,18 @@ def toy_data():
     from sklearn.preprocessing import StandardScaler
 
     X, y = make_classification(
-        n_samples=5000, n_features=100, n_informative=10,
-        n_redundant=0, n_repeated=0, n_classes=10,
-        n_clusters_per_class=1, shuffle=False,
-        class_sep=1.0, random_state=42,
+        n_samples=5000,
+        n_features=100,
+        n_informative=10,
+        n_redundant=0,
+        n_repeated=0,
+        n_classes=10,
+        n_clusters_per_class=1,
+        shuffle=False,
+        class_sep=1.0,
+        random_state=42,
     )
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, stratify=y, random_state=42
-    )
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
     scaler = StandardScaler()
     X_train = scaler.fit_transform(X_train)
     X_test = scaler.transform(X_test)

@@ -11,7 +11,6 @@ import torch
 from gfs.models.feature_selection.gumbel import GumbelFeatureSelector
 from gfs.models.feature_selection.scgist import ScGistFeatureSelector
 from gfs.models.feature_selection.stg import STGFeatureSelector
-
 from tests.featselect.conftest import train_gated_mlp
 
 

@@ -19,9 +19,7 @@ class FeatureSelector(ABC, nn.Module):
         self.n_select = n_select
 
     @abstractmethod
-    def forward(
-        self, x: torch.Tensor, tau: float, subgraph_id: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, tau: float, subgraph_id: torch.Tensor) -> torch.Tensor:
         """Apply feature mask to input expression.
 
         Args:
@@ -33,9 +31,7 @@ class FeatureSelector(ABC, nn.Module):
         """
 
     @abstractmethod
-    def get_mask(
-        self, tau: float = 1.0, subgraph_id: torch.Tensor | None = None
-    ) -> torch.Tensor:
+    def get_mask(self, tau: float = 1.0, subgraph_id: torch.Tensor | None = None) -> torch.Tensor:
         """Return current feature mask.
 
         At eval: always binary (n_genes,) or (1, n_genes).

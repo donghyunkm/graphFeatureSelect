@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from gfs.models.backbone import GNNBackbone
-from gfs.models.heads import ClassificationHead, ReconstructionHead
+from gfs.models.tasks import ClassificationHead, ReconstructionHead
 
 # ---------------------------------------------------------------------------
 # Constants matching dev data dimensions
@@ -40,9 +40,7 @@ def xyz():
 
 @pytest.fixture
 def subgraph_id():
-    return torch.repeat_interleave(
-        torch.arange(N_SUBGRAPHS), N_NODES // N_SUBGRAPHS
-    )
+    return torch.repeat_interleave(torch.arange(N_SUBGRAPHS), N_NODES // N_SUBGRAPHS)
 
 
 # ---------------------------------------------------------------------------
@@ -51,10 +49,20 @@ def subgraph_id():
 class TestGNNBackbone:
     def test_backbone_output_shape(self, gene_exp, edge_index, xyz, subgraph_id):
         backbone = GNNBackbone(
-            gene_ch=N_GENES, spatial_ch=N_SPATIAL, hid_ch=HID_CH,
-            n_layers=2, gnn_type="gat", dropout=0.0, heads=1,
-            pre_linear=True, residual=True, layer_norm=True, batch_norm=False,
-            jk=False, xyz_proj=False, x_residual=False,
+            gene_ch=N_GENES,
+            spatial_ch=N_SPATIAL,
+            hid_ch=HID_CH,
+            n_layers=2,
+            gnn_type="gat",
+            dropout=0.0,
+            heads=1,
+            pre_linear=True,
+            residual=True,
+            layer_norm=True,
+            batch_norm=False,
+            jk=False,
+            xyz_proj=False,
+            x_residual=False,
         )
         out = backbone(gene_exp, edge_index, xyz, subgraph_id)
         assert out.shape == (N_NODES, HID_CH)
@@ -62,8 +70,11 @@ class TestGNNBackbone:
     @pytest.mark.parametrize("gnn_type", ["gat", "sage", "gcn"])
     def test_backbone_gnn_types(self, gnn_type, gene_exp, edge_index, xyz, subgraph_id):
         backbone = GNNBackbone(
-            gene_ch=N_GENES, spatial_ch=N_SPATIAL, hid_ch=HID_CH,
-            n_layers=2, gnn_type=gnn_type,
+            gene_ch=N_GENES,
+            spatial_ch=N_SPATIAL,
+            hid_ch=HID_CH,
+            n_layers=2,
+            gnn_type=gnn_type,
         )
         out = backbone(gene_exp, edge_index, xyz, subgraph_id)
         assert out.shape == (N_NODES, HID_CH)
@@ -81,15 +92,21 @@ class TestGNNBackbone:
     )
     def test_backbone_with_options(self, opts, gene_exp, edge_index, xyz, subgraph_id):
         backbone = GNNBackbone(
-            gene_ch=N_GENES, spatial_ch=N_SPATIAL, hid_ch=HID_CH,
-            n_layers=2, gnn_type="gat", **opts,
+            gene_ch=N_GENES,
+            spatial_ch=N_SPATIAL,
+            hid_ch=HID_CH,
+            n_layers=2,
+            gnn_type="gat",
+            **opts,
         )
         out = backbone(gene_exp, edge_index, xyz, subgraph_id)
         assert out.shape == (N_NODES, HID_CH)
 
     def test_backbone_no_subgraph_id(self, gene_exp, edge_index, xyz):
         backbone = GNNBackbone(
-            gene_ch=N_GENES, spatial_ch=N_SPATIAL, hid_ch=HID_CH,
+            gene_ch=N_GENES,
+            spatial_ch=N_SPATIAL,
+            hid_ch=HID_CH,
         )
         out = backbone(gene_exp, edge_index, xyz, subgraph_id=None)
         assert out.shape == (N_NODES, HID_CH)
@@ -102,17 +119,16 @@ class TestGNNBackbone:
 
     def test_gradient_flows_backbone(self, gene_exp, edge_index, xyz, subgraph_id):
         backbone = GNNBackbone(
-            gene_ch=N_GENES, spatial_ch=N_SPATIAL, hid_ch=HID_CH,
+            gene_ch=N_GENES,
+            spatial_ch=N_SPATIAL,
+            hid_ch=HID_CH,
         )
         backbone.train()
         out = backbone(gene_exp, edge_index, xyz, subgraph_id)
         loss = out.sum()
         loss.backward()
         # Check that at least one parameter received a gradient
-        has_grad = any(
-            p.grad is not None and p.grad.abs().sum() > 0
-            for p in backbone.parameters()
-        )
+        has_grad = any(p.grad is not None and p.grad.abs().sum() > 0 for p in backbone.parameters())
         assert has_grad
 
 
@@ -142,7 +158,9 @@ class TestFullPipeline:
 
         fs = GumbelFeatureSelector(n_genes=N_GENES, n_select=10)
         backbone = GNNBackbone(
-            gene_ch=N_GENES, spatial_ch=N_SPATIAL, hid_ch=HID_CH,
+            gene_ch=N_GENES,
+            spatial_ch=N_SPATIAL,
+            hid_ch=HID_CH,
         )
         head = ClassificationHead(in_ch=HID_CH, n_classes=N_CLASSES)
 
@@ -153,9 +171,7 @@ class TestFullPipeline:
         logits = head(embeddings)
 
         assert logits.shape == (N_NODES, N_CLASSES)
-        loss = torch.nn.functional.cross_entropy(
-            logits, torch.randint(0, N_CLASSES, (N_NODES,))
-        )
+        loss = torch.nn.functional.cross_entropy(logits, torch.randint(0, N_CLASSES, (N_NODES,)))
         loss.backward()
 
     def test_gradient_flows_full_pipeline(self, gene_exp, edge_index, xyz, subgraph_id):
@@ -163,7 +179,9 @@ class TestFullPipeline:
 
         fs = GumbelFeatureSelector(n_genes=N_GENES, n_select=10)
         backbone = GNNBackbone(
-            gene_ch=N_GENES, spatial_ch=N_SPATIAL, hid_ch=HID_CH,
+            gene_ch=N_GENES,
+            spatial_ch=N_SPATIAL,
+            hid_ch=HID_CH,
         )
         head = ClassificationHead(in_ch=HID_CH, n_classes=N_CLASSES)
 
@@ -175,9 +193,7 @@ class TestFullPipeline:
         embeddings = backbone(masked, edge_index, xyz, subgraph_id)
         logits = head(embeddings)
 
-        loss = torch.nn.functional.cross_entropy(
-            logits, torch.randint(0, N_CLASSES, (N_NODES,))
-        )
+        loss = torch.nn.functional.cross_entropy(logits, torch.randint(0, N_CLASSES, (N_NODES,)))
         loss.backward()
 
         # Gradients must flow all the way back to the feature selector logits

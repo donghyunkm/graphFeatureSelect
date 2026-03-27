@@ -12,17 +12,18 @@ Usage:
 """
 
 import argparse
-from pathlib import Path
-import anndata as ad
-from typing import List
-import warnings
 import logging
 import sys
-from datetime import datetime
 import time
+import warnings
+from datetime import datetime
+from pathlib import Path
+from typing import List
+
+import anndata as ad
 
 # Suppress warnings for cleaner output
-warnings.filterwarnings('ignore')
+warnings.filterwarnings("ignore")
 
 # Allow writing nullable strings in anndata
 ad.settings.allow_write_nullable_strings = True
@@ -57,17 +58,14 @@ def setup_logging(log_dir: Path, test_mode: bool = False) -> logging.Logger:
     # File handler - detailed logs
     file_handler = logging.FileHandler(log_file)
     file_handler.setLevel(logging.DEBUG)
-    file_formatter = logging.Formatter(
-        '%(asctime)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
+    file_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     file_handler.setFormatter(file_formatter)
     logger.addHandler(file_handler)
 
     # Console handler - less verbose
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
-    console_formatter = logging.Formatter('%(message)s')
+    console_formatter = logging.Formatter("%(message)s")
     console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
 
@@ -116,9 +114,9 @@ def concatenate_h5ad_files(files: List[Path], output_path: Path, label: str, log
         logger.warning(f"No files found for {label}")
         return
 
-    logger.info(f"\n{'='*60}")
+    logger.info(f"\n{'=' * 60}")
     logger.info(f"Processing {label}")
-    logger.info(f"{'='*60}")
+    logger.info(f"{'=' * 60}")
     logger.info(f"Found {len(files)} files")
     logger.debug(f"First file: {files[0]}")
     logger.debug(f"Last file: {files[-1]}")
@@ -178,7 +176,7 @@ def concatenate_h5ad_files(files: List[Path], output_path: Path, label: str, log
 
     # Concatenate along observation axis (cells)
     try:
-        adata_combined = ad.concat(adatas, axis=0, join='outer', merge='unique')
+        adata_combined = ad.concat(adatas, axis=0, join="outer", merge="unique")
         concat_time = time.time() - concat_start
         logger.info(f"Concatenation complete in {concat_time:.2f}s")
     except Exception as e:
@@ -195,7 +193,7 @@ def concatenate_h5ad_files(files: List[Path], output_path: Path, label: str, log
 
     # Memory usage estimate
     try:
-        memory_mb = adata_combined.X.nbytes / 1024**2 if hasattr(adata_combined.X, 'nbytes') else 0
+        memory_mb = adata_combined.X.nbytes / 1024**2 if hasattr(adata_combined.X, "nbytes") else 0
         logger.debug(f"Estimated memory usage: {memory_mb:.2f} MB")
     except:
         pass
@@ -228,28 +226,13 @@ def concatenate_h5ad_files(files: List[Path], output_path: Path, label: str, log
 
 def main():
     parser = argparse.ArgumentParser(description="Concatenate h5ad files")
+    parser.add_argument("--test", action="store_true", help="Test mode: only process first 5 files per category")
     parser.add_argument(
-        "--test",
-        action="store_true",
-        help="Test mode: only process first 5 files per category"
+        "--raw-dir", type=str, default="../data/raw", help="Path to raw data directory (default: ../data/raw)"
     )
+    parser.add_argument("--output-dir", type=str, default="../data", help="Path to output directory (default: ../data)")
     parser.add_argument(
-        "--raw-dir",
-        type=str,
-        default="../data/raw",
-        help="Path to raw data directory (default: ../data/raw)"
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="../data",
-        help="Path to output directory (default: ../data)"
-    )
-    parser.add_argument(
-        "--log-dir",
-        type=str,
-        default="../data/logs",
-        help="Path to log directory (default: ../data/logs)"
+        "--log-dir", type=str, default="../data/logs", help="Path to log directory (default: ../data/logs)"
     )
     args = parser.parse_args()
 
@@ -262,9 +245,9 @@ def main():
     # Setup logging
     logger = setup_logging(log_dir, test_mode=args.test)
 
-    logger.info("="*60)
+    logger.info("=" * 60)
     logger.info("Data Processing Script - h5ad Concatenation")
-    logger.info("="*60)
+    logger.info("=" * 60)
     logger.info(f"Script started at: {datetime.now()}")
     logger.info(f"Command line args: {' '.join(sys.argv[1:])}")
     logger.info(f"Test mode: {args.test}")
@@ -292,9 +275,9 @@ def main():
 
     # Test mode: use only first 5 files
     if args.test:
-        logger.info("\n" + "="*60)
+        logger.info("\n" + "=" * 60)
         logger.info("TEST MODE: Processing only first 5 files per category")
-        logger.info("="*60)
+        logger.info("=" * 60)
         metadata_files = metadata_files[:5]
         sp_self_files = sp_self_files[:5]
         logger.debug(f"Metadata files: {[f.name for f in metadata_files]}")
@@ -325,10 +308,10 @@ def main():
 
     total_time = time.time() - script_start
 
-    logger.info("\n" + "="*60)
+    logger.info("\n" + "=" * 60)
     logger.info("Processing complete!")
-    logger.info("="*60)
-    logger.info(f"Total script time: {total_time:.2f}s ({total_time/60:.2f} minutes)")
+    logger.info("=" * 60)
+    logger.info(f"Total script time: {total_time:.2f}s ({total_time / 60:.2f} minutes)")
     logger.info(f"Script ended at: {datetime.now()}")
 
 

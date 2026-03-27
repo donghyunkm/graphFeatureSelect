@@ -7,8 +7,8 @@ import torch.nn.functional as F
 from torchmetrics.classification import MulticlassAccuracy, MulticlassF1Score
 
 from gfs.models.backbone import GNNBackbone
-from gfs.models.heads import ClassificationHead, ReconstructionHead
 from gfs.models.feature_selection import get_feature_selector
+from gfs.models.tasks import ClassificationHead, ReconstructionHead
 
 
 class LitGnnFs(L.LightningModule):
@@ -46,8 +46,8 @@ class LitGnnFs(L.LightningModule):
             fs_method=fs_cfg.method,
             n_genes=n_genes,
             n_select=cfg.n_select,
-            sigma=getattr(fs_cfg, 'sigma', 0.5),
-            l1=getattr(fs_cfg, 'l1', 0.1),
+            sigma=getattr(fs_cfg, "sigma", 0.5),
+            l1=getattr(fs_cfg, "l1", 0.1),
         )
 
         # GNN backbone
@@ -95,7 +95,7 @@ class LitGnnFs(L.LightningModule):
         # Config references
         self.trainmode = cfg.trainmode
         self.lam = cfg.lam
-        self.tautype = getattr(cfg.feature_selection, 'tautype', 'constant')
+        self.tautype = getattr(cfg.feature_selection, "tautype", "constant")
 
     def forward(self, gene_exp, edge_index, xyz, subgraph_id=None, tau=1.0):
         """Full forward: feature selection -> backbone -> task head."""
@@ -137,8 +137,10 @@ class LitGnnFs(L.LightningModule):
     def training_step(self, batch, batch_idx):
         tau = self._get_tau()
         pred = self.forward(
-            batch.gene_exp, batch.edge_index, batch.xyz,
-            subgraph_id=getattr(batch, 'subgraph_id', None),
+            batch.gene_exp,
+            batch.edge_index,
+            batch.xyz,
+            subgraph_id=getattr(batch, "subgraph_id", None),
             tau=tau,
         )
 
@@ -173,8 +175,10 @@ class LitGnnFs(L.LightningModule):
     def validation_step(self, batch, batch_idx):
         tau = self._get_tau()
         pred = self.forward(
-            batch.gene_exp, batch.edge_index, batch.xyz,
-            subgraph_id=getattr(batch, 'subgraph_id', None),
+            batch.gene_exp,
+            batch.edge_index,
+            batch.xyz,
+            subgraph_id=getattr(batch, "subgraph_id", None),
             tau=tau,
         )
 
@@ -199,8 +203,10 @@ class LitGnnFs(L.LightningModule):
     def test_step(self, batch, batch_idx):
         tau = self._get_tau()
         pred = self.forward(
-            batch.gene_exp, batch.edge_index, batch.xyz,
-            subgraph_id=getattr(batch, 'subgraph_id', None),
+            batch.gene_exp,
+            batch.edge_index,
+            batch.xyz,
+            subgraph_id=getattr(batch, "subgraph_id", None),
             tau=tau,
         )
 
@@ -227,9 +233,7 @@ class LitGnnFs(L.LightningModule):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.trainer.lr)
 
         if self.hparams.trainer.lr_scheduler == "multistep":
-            scheduler = torch.optim.lr_scheduler.MultiStepLR(
-                optimizer, milestones=[100], gamma=0.1
-            )
+            scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100], gamma=0.1)
             return {
                 "optimizer": optimizer,
                 "lr_scheduler": {"scheduler": scheduler, "interval": "epoch"},

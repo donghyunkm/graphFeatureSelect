@@ -33,8 +33,7 @@ def test_gumbel_high_tau_more_uniform():
     low_tau_mean = torch.stack(low_tau_masks).mean(dim=0).squeeze()
 
     assert high_tau_mean.max().item() < low_tau_mean.max().item(), (
-        f"High tau max ({high_tau_mean.max():.4f}) should be less than "
-        f"low tau max ({low_tau_mean.max():.4f})"
+        f"High tau max ({high_tau_mean.max():.4f}) should be less than low tau max ({low_tau_mean.max():.4f})"
     )
 
 
@@ -91,10 +90,7 @@ def test_gumbel_tau_convergence():
     mask = selector.get_mask(tau=0.001, subgraph_id=subgraph_id).detach().squeeze()
     near_binary = ((mask < 0.05) | (mask > 0.95)).float().mean().item()
 
-    assert near_binary > 0.9, (
-        f"At tau=0.001, {near_binary:.1%} of mask values are near-binary "
-        f"(expected >90%)"
-    )
+    assert near_binary > 0.9, f"At tau=0.001, {near_binary:.1%} of mask values are near-binary (expected >90%)"
 
 
 @pytest.mark.slow

@@ -21,6 +21,7 @@ N_SUBGRAPHS = 5
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def x():
     return torch.randn(N_NODES, N_GENES)
@@ -54,6 +55,7 @@ def selector(request, gumbel, stg, scgist):
 # ---------------------------------------------------------------------------
 # GumbelFeatureSelector
 # ---------------------------------------------------------------------------
+
 
 class TestGumbelFeatureSelector:
     def test_forward_shape(self, gumbel, x, subgraph_id):
@@ -93,18 +95,14 @@ class TestGumbelFeatureSelector:
         for sg_id in subgraph_id.unique():
             sg_nodes = (subgraph_id == sg_id).nonzero().squeeze()
             masks_in_sg = mask[sg_nodes]
-            assert (masks_in_sg == masks_in_sg[0]).all(), (
-                f"Mask varies within subgraph {sg_id.item()}"
-            )
+            assert (masks_in_sg == masks_in_sg[0]).all(), f"Mask varies within subgraph {sg_id.item()}"
 
     def test_different_subgraphs_can_differ(self, gumbel, subgraph_id):
         gumbel.train()
         mask = gumbel.get_mask(tau=1.0, subgraph_id=subgraph_id)
         first_nodes = [0, 40, 80, 120, 160]
         unique_masks = mask[first_nodes]
-        assert len(unique_masks.unique(dim=0)) > 1, (
-            "Expected different subgraphs to have different masks"
-        )
+        assert len(unique_masks.unique(dim=0)) > 1, "Expected different subgraphs to have different masks"
 
     def test_regularization_loss(self, gumbel):
         loss = gumbel.regularization_loss()
@@ -129,14 +127,14 @@ class TestGumbelFeatureSelector:
         out = gumbel(x, tau=1.0, subgraph_id=subgraph_id)
         loss = out.sum() + gumbel.regularization_loss()
         loss.backward()
-        has_grad = any(p.grad is not None and p.grad.abs().sum() > 0
-                       for p in gumbel.parameters())
+        has_grad = any(p.grad is not None and p.grad.abs().sum() > 0 for p in gumbel.parameters())
         assert has_grad, "No gradient flowed to any parameter"
 
 
 # ---------------------------------------------------------------------------
 # STGFeatureSelector
 # ---------------------------------------------------------------------------
+
 
 class TestSTGFeatureSelector:
     def test_forward_shape(self, stg, x, subgraph_id):
@@ -190,8 +188,7 @@ class TestSTGFeatureSelector:
         out = stg(x, tau=1.0, subgraph_id=subgraph_id)
         loss = out.sum() + stg.regularization_loss()
         loss.backward()
-        has_grad = any(p.grad is not None and p.grad.abs().sum() > 0
-                       for p in stg.parameters())
+        has_grad = any(p.grad is not None and p.grad.abs().sum() > 0 for p in stg.parameters())
         assert has_grad, "No gradient flowed to any parameter"
 
     def test_eval_deterministic(self, stg, x, subgraph_id):
@@ -205,6 +202,7 @@ class TestSTGFeatureSelector:
 # ---------------------------------------------------------------------------
 # ScGistFeatureSelector
 # ---------------------------------------------------------------------------
+
 
 class TestScGistFeatureSelector:
     def test_forward_shape(self, scgist, x, subgraph_id):
@@ -258,8 +256,7 @@ class TestScGistFeatureSelector:
         out = scgist(x, tau=1.0, subgraph_id=subgraph_id)
         loss = out.sum() + scgist.regularization_loss()
         loss.backward()
-        has_grad = any(p.grad is not None and p.grad.abs().sum() > 0
-                       for p in scgist.parameters())
+        has_grad = any(p.grad is not None and p.grad.abs().sum() > 0 for p in scgist.parameters())
         assert has_grad, "No gradient flowed to any parameter"
 
     def test_regularization_encourages_sparsity(self, scgist):
@@ -269,14 +266,13 @@ class TestScGistFeatureSelector:
             scgist.logits.zero_()
             scgist.logits[0, :N_SELECT] = 1.0
         loss_sparse = scgist.regularization_loss().item()
-        assert loss_sparse < loss_init, (
-            f"Sparse mask loss ({loss_sparse}) should be less than init loss ({loss_init})"
-        )
+        assert loss_sparse < loss_init, f"Sparse mask loss ({loss_sparse}) should be less than init loss ({loss_init})"
 
 
 # ---------------------------------------------------------------------------
 # Cross-selector tests (parameterized)
 # ---------------------------------------------------------------------------
+
 
 class TestAllSelectors:
     def test_forward_returns_tensor(self, selector, x, subgraph_id):
@@ -318,8 +314,7 @@ class TestAllSelectors:
         out = selector(x, tau=1.0, subgraph_id=subgraph_id)
         loss = out.sum() + selector.regularization_loss()
         loss.backward()
-        has_grad = any(p.grad is not None and p.grad.abs().sum() > 0
-                       for p in selector.parameters())
+        has_grad = any(p.grad is not None and p.grad.abs().sum() > 0 for p in selector.parameters())
         assert has_grad
 
     def test_output_dtype_matches_input(self, selector, x, subgraph_id):

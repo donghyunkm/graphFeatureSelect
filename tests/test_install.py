@@ -26,7 +26,7 @@ if torch.cuda.is_available():
 
     # Test GPU tensor operations
     print("\n5. Testing GPU tensor operations...")
-    device = torch.device('cuda:0')
+    device = torch.device("cuda:0")
     x = torch.randn(1000, 1000, device=device)
     y = torch.randn(1000, 1000, device=device)
     z = torch.matmul(x, y)
@@ -47,13 +47,12 @@ print("\n7. Testing PyG operations...")
 from torch_geometric.data import Data
 
 # Create a simple graph
-edge_index = torch.tensor([[0, 1, 1, 2],
-                          [1, 0, 2, 1]], dtype=torch.long)
+edge_index = torch.tensor([[0, 1, 1, 2], [1, 0, 2, 1]], dtype=torch.long)
 x = torch.randn(3, 16)  # 3 nodes with 16 features each
 
 if torch.cuda.is_available():
-    edge_index = edge_index.to('cuda:0')
-    x = x.to('cuda:0')
+    edge_index = edge_index.to("cuda:0")
+    x = x.to("cuda:0")
 
 data = Data(x=x, edge_index=edge_index)
 print(f"   ✓ PyG Data object created successfully")
@@ -69,7 +68,7 @@ from torch_geometric.nn import GCNConv
 
 conv = GCNConv(16, 32)
 if torch.cuda.is_available():
-    conv = conv.to('cuda:0')
+    conv = conv.to("cuda:0")
 
 out = conv(data.x, data.edge_index)
 print(f"   ✓ GCNConv layer forward pass successful")

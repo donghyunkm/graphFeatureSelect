@@ -21,14 +21,12 @@ class ScGistFeatureSelector(FeatureSelector):
         self.l1 = l1
 
     def forward(
-        self, x: torch.Tensor, tau: float = None, subgraph_id: torch.Tensor = None
+        self, x: torch.Tensor, tau: float | None = None, subgraph_id: torch.Tensor | None = None
     ) -> torch.Tensor:
         mask = self.get_mask(tau, subgraph_id)
         return mask * x
 
-    def get_mask(
-        self, tau: float = None, subgraph_id: torch.Tensor | None = None
-    ) -> torch.Tensor:
+    def get_mask(self, tau: float | None = None, subgraph_id: torch.Tensor | None = None) -> torch.Tensor:
         if self.training:
             return self.logits  # continuous (1, n_genes), broadcasts
         else:

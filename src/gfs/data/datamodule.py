@@ -89,9 +89,7 @@ class HemisphereDataModule(L.LightningDataModule):
     # Dataloaders
     # ------------------------------------------------------------------
 
-    def _make_loader(
-        self, data, mask, *, shuffle: bool
-    ) -> NeighborLoader:
+    def _make_loader(self, data, mask, *, shuffle: bool) -> NeighborLoader:
         return NeighborLoader(
             data,
             num_neighbors=[-1] * self.n_hops,
@@ -102,23 +100,15 @@ class HemisphereDataModule(L.LightningDataModule):
         )
 
     def train_dataloader(self) -> NeighborLoader:
-        return self._make_loader(
-            self.train_data, self.train_data.train_mask, shuffle=True
-        )
+        return self._make_loader(self.train_data, self.train_data.train_mask, shuffle=True)
 
     def val_dataloader(self) -> NeighborLoader:
-        return self._make_loader(
-            self.train_data, self.train_data.val_mask, shuffle=False
-        )
+        return self._make_loader(self.train_data, self.train_data.val_mask, shuffle=False)
 
     def test_dataloader(self) -> NeighborLoader:
         if self.test_data is None:
-            raise RuntimeError(
-                "No test_path was provided — cannot create test dataloader."
-            )
-        return self._make_loader(
-            self.test_data, self.test_data.test_mask, shuffle=False
-        )
+            raise RuntimeError("No test_path was provided — cannot create test dataloader.")
+        return self._make_loader(self.test_data, self.test_data.test_mask, shuffle=False)
 
     # ------------------------------------------------------------------
     # Metadata properties

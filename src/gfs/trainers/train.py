@@ -15,7 +15,7 @@ def main(cfg: DictConfig) -> None:
     # Data
     dm = HemisphereDataModule(
         train_path=cfg.data.train_path,
-        test_path=getattr(cfg.data, 'test_path', None),
+        test_path=getattr(cfg.data, "test_path", None),
         cell_type_col=cfg.data.cell_type_col,
         spatial_cols=list(cfg.data.spatial_cols),
         min_cells=cfg.data.min_cells,

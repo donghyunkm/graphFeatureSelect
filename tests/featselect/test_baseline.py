@@ -7,10 +7,10 @@ classification and meaningfully outperforms random feature subsets.
 import pytest
 import torch
 import torch.nn as nn
-from torch.utils.data import TensorDataset, DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 
-from gfs.models.feature_selection import GumbelFeatureSelector, STGFeatureSelector, ScGistFeatureSelector
-from tests.featselect.conftest import GatedMLP, train_gated_mlp, eval_accuracy
+from gfs.models.feature_selection import GumbelFeatureSelector, ScGistFeatureSelector, STGFeatureSelector
+from tests.featselect.conftest import GatedMLP, eval_accuracy, train_gated_mlp
 
 
 @pytest.mark.slow
@@ -45,11 +45,14 @@ def test_baseline_mlp_accuracy(toy_data):
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("selector_factory,name", [
-    (lambda: GumbelFeatureSelector(n_genes=100, n_select=10), "Gumbel"),
-    (lambda: STGFeatureSelector(n_genes=100, n_select=10, sigma=0.5), "STG"),
-    (lambda: ScGistFeatureSelector(n_genes=100, n_select=10), "scGist"),
-])
+@pytest.mark.parametrize(
+    "selector_factory,name",
+    [
+        (lambda: GumbelFeatureSelector(n_genes=100, n_select=10), "Gumbel"),
+        (lambda: STGFeatureSelector(n_genes=100, n_select=10, sigma=0.5), "STG"),
+        (lambda: ScGistFeatureSelector(n_genes=100, n_select=10), "scGist"),
+    ],
+)
 def test_selected_features_vs_random(toy_data, selector_factory, name):
     """Learned feature mask should outperform a random mask of the same size."""
     torch.manual_seed(42)
@@ -82,6 +85,5 @@ def test_selected_features_vs_random(toy_data, selector_factory, name):
         random_acc = (preds == toy_data["y_test"]).float().mean().item()
 
     assert learned_acc > random_acc, (
-        f"{name}: learned mask acc ({learned_acc:.3f}) should beat "
-        f"random mask acc ({random_acc:.3f})"
+        f"{name}: learned mask acc ({learned_acc:.3f}) should beat random mask acc ({random_acc:.3f})"
     )

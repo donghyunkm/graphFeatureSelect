@@ -75,8 +75,10 @@ def split_and_save(adata: ad.AnnData, out_dir: Path):
 
         path = out_dir / f"section_{section_id}_{hemi_label}.h5ad"
         hemi.write_h5ad(path)
-        print(f"Saved {hemi_label} hemisphere: {hemi.shape[0]} cells, "
-              f"{hemi.obs[CELL_TYPE_COL].nunique()} subclasses -> {path.name}")
+        print(
+            f"Saved {hemi_label} hemisphere: {hemi.shape[0]} cells, "
+            f"{hemi.obs[CELL_TYPE_COL].nunique()} subclasses -> {path.name}"
+        )
 
     # Also save the full section (graph built on all cells together)
     full = build_spatial_graph(adata.copy(), k=K_NEIGHBORS, coords=SPATIAL_COORDS)

@@ -4,17 +4,16 @@ These tests load real dev data from data/dev/ and verify shapes, dtypes,
 label encoding, split integrity, and dataloader behavior.
 """
 
+from pathlib import Path
+
 import pytest
 import torch
-from pathlib import Path
 
 DEV_DIR = Path("data/dev")
 TRAIN_PATH = DEV_DIR / "section_1199651094_original.h5ad"
 TEST_PATH = DEV_DIR / "section_1199651094_reflected.h5ad"
 
-pytestmark = pytest.mark.skipif(
-    not DEV_DIR.exists(), reason="Dev data not found at data/dev/"
-)
+pytestmark = pytest.mark.skipif(not DEV_DIR.exists(), reason="Dev data not found at data/dev/")
 
 
 @pytest.fixture(scope="module")
@@ -130,9 +129,7 @@ def test_expression_range(train_data):
     gene_exp = train_data.gene_exp
 
     assert gene_exp.min().item() >= 0
-    assert gene_exp.max().item() < 20, (
-        f"Max expression {gene_exp.max().item():.1f} exceeds expected range"
-    )
+    assert gene_exp.max().item() < 20, f"Max expression {gene_exp.max().item():.1f} exceeds expected range"
 
     # Sparsity between 50% and 90%
     sparsity = (gene_exp == 0).float().mean().item()
@@ -177,8 +174,7 @@ def test_stratified_split(train_data):
         class_val_frac = n_class_val / n_class
         # Allow generous tolerance: within 2x of expected fraction
         assert class_val_frac <= overall_val_frac * 3, (
-            f"Class {label.item()}: val fraction {class_val_frac:.2%} "
-            f"is more than 3x overall {overall_val_frac:.2%}"
+            f"Class {label.item()}: val fraction {class_val_frac:.2%} is more than 3x overall {overall_val_frac:.2%}"
         )
 
 
