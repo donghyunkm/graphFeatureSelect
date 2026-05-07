@@ -219,10 +219,10 @@ class GnnFs(torch.nn.Module):
             n_subgraphs = subgraph_id.max() + 1
             # sample has dims (n_selections, n_subgraphs, n_features) --> chooses 1 gene for each of n_selections
             sample = F.gumbel_softmax(self.logits.unsqueeze(1).repeat(1, n_subgraphs, 1), tau=tau, hard=False, dim=-1)
-            print("SAMPLE ", sample.shape)
+            # print("SAMPLE ", sample.shape)
             # k_hot has dims (n_subgraphs, n_features) --> uses max operation to combine/sum the n_selections into 1 dimension 
             k_hot = torch.max(sample, dim=0).values
-            print("KHOT ", k_hot.shape)
+            # print("KHOT ", k_hot.shape)
             # repeat k-hot masks for each node based on their subgraph membership
             return k_hot[subgraph_id]
         else:
@@ -253,6 +253,7 @@ class GnnFs(torch.nn.Module):
 
         if self.fs_method == "persist":
             mask = self.get_mask(tau, subgraph_id)
+            # print("256mask ", mask)
             # print("254persist ", mask.shape, x.shape) #254persist  torch.Size([16418, 500]) torch.Size([16418, 500])
             x = mask * x
         if self.fs_method == "scGist":
@@ -377,6 +378,8 @@ class LitGnnFs(L.LightningModule):
     def training_step(self, batch, batch_idx):
         # calculate losses and metrics for all training nodes in the batch.
         batch_size = torch.sum(batch.train_mask)
+        # print("381 BEFORE HALFHOP ", batch.x.shape) # 381 BEFORE HALFHOP  torch.Size([4258, 503])
+
         data = self.transform(batch)
 
         if self.trainmode == 0:
@@ -385,7 +388,7 @@ class LitGnnFs(L.LightningModule):
         elif self.trainmode == 1:
             # backprop/metrics for only "root" nodes, not neighbors
             idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0]
-        print("317 ", data.x.shape, len(data.gene_exp_ind))
+        # print("389 ", data.x.shape, len(data.gene_exp_ind)) # torch.Size([18503, 503]) 500
         celltype_pred = self.forward(
             gene_exp=data.x[:, data.gene_exp_ind],
             edge_index=data.edge_index,
@@ -394,7 +397,6 @@ class LitGnnFs(L.LightningModule):
             tau=tau_schedule(self.tautype, self.current_epoch, self.trainer.max_epochs),
             hard_=False,
         )
-
         # conditionally remove "slow nodes" (from halfhop)
         if hasattr(data, "slow_node_mask"):
             celltype_pred = celltype_pred[~data.slow_node_mask]
@@ -430,7 +432,6 @@ class LitGnnFs(L.LightningModule):
             "logger": self.hparams.logging.logger,
             "batch_size": batch_size,
         }
-
         self.log("train_loss_ce", train_loss_ce, **options)
         self.log("train_loss_reg", train_loss_reg, **options) if self.model.fs_method == "scGist" else None
         self.log("train_overall_acc", self.train_overall_acc, **options)
@@ -501,7 +502,6 @@ class LitGnnFs(L.LightningModule):
         if self.model.fs_method == "scGist":
             val_loss_reg = self.model.feature_regularizer(self.model.logits)
             val_loss_ce += val_loss_reg 
-
 
         self.val_overall_acc(preds=celltype_pred[idx], target=batch.celltype[idx]) # original
 

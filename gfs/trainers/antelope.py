@@ -5,7 +5,9 @@ from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
 from omegaconf import DictConfig, OmegaConf
 import pickle
-from gfs.data.hemisphere import PyGAnnDataGraphDataModule
+# from gfs.data.hemisphere import PyGAnnDataGraphDataModule
+from gfs.data.hemisphere_new import PyGAnnDataGraphDataModule
+
 from gfs.models.antelope import LitGnnFs
 from gfs.utils import get_datetime, get_paths
 import torch
@@ -28,7 +30,7 @@ def main(config: DictConfig):
     setup_seeds(config.data.rand_seed)
     # paths
     paths = get_paths()
-    expname_config = f"{config.data.prefix}_s{config.data.rand_seed}_f{config.data.cv}"
+    expname_config = f"{config.data.prefix}_s{config.data.rand_seed}"
     # expname = get_datetime(expname=config.expname)
     expname = get_datetime(expname=expname_config)
     log_path = paths["data_root"] + f"logs/{expname}"
@@ -47,19 +49,18 @@ def main(config: DictConfig):
 
     lr_monitor = LearningRateMonitor(logging_interval='step')
 
-
+    print("paths['data_root'] =", paths["data_root"], type(paths["data_root"]))
+    print("config.data.path_train =", config.data.path_train, type(config.data.path_train))
     # data
     datamodule = PyGAnnDataGraphDataModule(
         data_dir=paths["data_root"],
-        file_names=config.data.file_names,
+        path_train=paths["data_root"] + config.data.path_train,
+        path_valtest=paths["data_root"] + config.data.path_valtest,
         cell_type=config.data.cell_type,
         spatial_coords=config.data.spatial_coords,
         self_loops_only=config.data.self_loops_only,
         batch_size=config.data.batch_size,
         n_hops=config.data.n_hops,
-        d_threshold=config.data.d_threshold,
-        n_splits=config.data.n_splits,
-        cv=config.data.cv,
         rand_seed=config.data.rand_seed,
     )
 
@@ -79,10 +80,6 @@ def main(config: DictConfig):
         # accelerator="cpu"
     )
     trainer.fit(model=model, datamodule=datamodule)
-    # pred_y = trainer.predict(ckpt_path="best", datamodule=datamodule)
-    
-    # with open(checkpoint_path + '/pred_y.pkl', 'wb') as file:
-    #     pickle.dump(pred_y, file)
 
     trainer.test(model=model, ckpt_path="best", datamodule=datamodule)
 

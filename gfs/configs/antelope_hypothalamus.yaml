@@ -1,11 +1,13 @@
 expname: "default"
 
 data:
-  name: "isocortex"
-  path_train: "isocortex_train_final.h5ad"
-  path_valtest: "isocortex_valtest_final.h5ad"
+  name: "one_hemisphere"
+  file_names:
+    - "Hypothalamus_cleaned.h5ad"
+  test_names:
+    - "test.h5ad"
   n_genes: 500
-  n_labels: 22
+  n_labels: 58
   cell_type: "subclass"
   spatial_coords:
     - "rec_ccf_x"
@@ -15,8 +17,11 @@ data:
   batch_size: 64
   n_hops: 2
   num_workers: 16
+  d_threshold: 1000
+  n_splits: 5
+  cv: 0
   rand_seed: 42
-  prefix: "isocortex_s10"
+  prefix: "test"
 model:
   name: "antelope"
   gene_ch: ${data.n_genes}
@@ -26,11 +31,11 @@ model:
   n_select: 10
   local_layers: 2
   dropout: 0.5
-  heads: 3
+  heads: 1
   pre_linear: true
   res: true
   ln: true
-  bn: true
+  bn: false
   jk: true
   x_res: true
   gnn: "gat"
@@ -38,9 +43,12 @@ model:
   halfhop: true
   tautype: "exp"
   trainmode: 0
+  mask_type: 0
   loss: "ce"
   fs_method: "persist"
   focal_loss: false
+  sigma: 1.0
+  lam: 0.1
 
 logging:
   log_dir: "logs"
