@@ -378,10 +378,23 @@ class LitGnnFs(L.LightningModule):
 
     def on_train_epoch_end(self):
         # log gene selections and probabilities at the end of each epoch
-        mask = self.model.FeatureSelector.get_mask()
-        nonzero_elements = torch.count_nonzero(mask) 
-        print("Nonzero ", nonzero_elements)
-        print("Mask ", mask)
+        mask_indices = self.model.FeatureSelector.get_mask_indices()
+
+        metrics = {"epoch": self.current_epoch}
+        for i in range(len(mask_indices)):
+            metrics[f"sel_{i}"] = mask_indices[i].item()
+
+        print("Selected gene cnt: ", len(mask_indices))
+
+        # get filepath of logger
+        path = self.logger._root_dir + "/selections.csv"
+        file_exists = os.path.isfile(path)
+        with open(path, "a", newline="") as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(metrics.keys())
+            writer.writerow([v for v in metrics.values()])
+
         return
 
     def validation_step(self, batch, batch_idx):

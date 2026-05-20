@@ -1,12 +1,12 @@
 #!/bin/bash
 #SBATCH --nodes=1 # Run all processes on a single node
 #SBATCH --ntasks=1 # Run a single task
-#SBATCH --cpus-per-task=4 # Number of CPU cores per task
+#SBATCH --cpus-per-task=8 # Number of CPU cores per task
 #SBATCH --mem=128g
 #SBATCH -p qTRDGPU
 #SBATCH --gres=gpu:1
-#SBATCH -t 30:00:00
-#SBATCH -J gnn
+#SBATCH -t 72:00:00
+#SBATCH -J gfs
 #SBATCH -e ../error/error-comms-%A.err
 #SBATCH -o ../out/out-comms-%A.out
 #SBATCH -A trends53c17
@@ -14,6 +14,7 @@
 #SBATCH --mail-user=dkim195@gsu.edu
 #SBATCH --oversubscribe
 #SBATCH --exclude=arctrdagn007
+#SBATCH --exclude=arctrdagn015
 
 
 sleep 10s
@@ -21,4 +22,4 @@ sleep 10s
 export PATH=/data/users1/dkim195/miniconda3/bin:$PATH
 source /data/users1/dkim195/miniconda3/etc/profile.d/conda.sh
 conda activate /data/users1/dkim195/miniconda3/envs/gfs
-python ../gfs/trainers/antelope.py data.prefix="isocortex_s40_500epochs_newdata" trainer.max_epochs=500 model.n_select=40
+python ../gfs/trainers/antelope_stg.py data.prefix="stg_lam20_500epochs" trainer.lr=0.001 model.lam=20.0 trainer.max_epochs=500

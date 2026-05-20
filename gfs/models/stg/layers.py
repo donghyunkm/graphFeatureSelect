@@ -2,7 +2,7 @@ import torch.nn as nn
 import torch
 import math
 from gfs.models.stg.utils import get_batcnnorm, get_dropout, get_activation
-
+import numpy as np
 __all__ = [
     'LinearLayer', 'MLPLayer', 'FeatureSelector',
 ]
@@ -37,6 +37,14 @@ class FeatureSelector(nn.Module):
         self.noise = fn(self.noise)
         return self
 
+    def get_mask_indices(self):
+        # if mode == 'raw':
+        #     return self.mu.detach().cpu().numpy()
+        # elif mode == 'prob':
+        #     return np.minimum(1.0, np.maximum(0.0, self.mu.detach().cpu().numpy() + 0.5)) 
+        probs = np.minimum(1.0, np.maximum(0.0, self.mu.detach().cpu().numpy() + 0.5)) 
+        indices = np.where(probs == 1.0)[0]
+        return indices 
 
 class GatingLayer(nn.Module):
     '''To implement L1-based gating layer (so that we can compare L1 with L0(STG) in a fair way)

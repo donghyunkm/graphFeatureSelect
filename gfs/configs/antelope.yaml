@@ -41,6 +41,8 @@ model:
   loss: "ce"
   fs_method: "persist"
   focal_loss: false
+  sigma: 1.0
+  lam: 0.1
 
 logging:
   log_dir: "logs"
