@@ -130,7 +130,8 @@ class GnnFs(torch.nn.Module):
         gnn,
         xyz_status,
         fs_method,
-        focal_loss
+        focal_loss,
+        hard_training
     ):
         super(GnnFs, self).__init__()
         self.fs_method = fs_method
@@ -152,7 +153,7 @@ class GnnFs(torch.nn.Module):
         self.lins = torch.nn.ModuleList()
         self.lns = torch.nn.ModuleList()
         self.bns = torch.nn.ModuleList()
-
+        self.hard_training = hard_training
         self.lin_in = torch.nn.Linear(gene_ch, hid_ch)
         self.focal_loss = focal_loss
         if self.fs_method == "scGist":
@@ -212,7 +213,8 @@ class GnnFs(torch.nn.Module):
         """
         Get soft k-hot mask
         """
-        if self.training:
+        if self.training and not self.hard_training:
+            print("soft")
             # sample soft k-hot vectors for each subgraph in the batch during training
             # extra samples are harmless, makes indexing more straightforward;
             # case: e.g. subgraph_id.unique() = [0, 2, 3, 4]
@@ -226,6 +228,7 @@ class GnnFs(torch.nn.Module):
             # repeat k-hot masks for each node based on their subgraph membership
             return k_hot[subgraph_id]
         else:
+            print("hard")
             # return hard k-hot mask for evaluation
             k_hot_ind = torch.argmax(self.logits, dim=1)
             k_hot = torch.zeros(1, self.logits.size(1), device=self.logits.device)
@@ -324,7 +327,8 @@ class LitGnnFs(L.LightningModule):
             gnn=cfg.gnn,
             xyz_status=cfg.xyz_status,
             fs_method = cfg.fs_method,
-            focal_loss = cfg.focal_loss
+            focal_loss = cfg.focal_loss,
+            hard_training = cfg.hard_training
         )
 
         # related to training step
@@ -335,7 +339,6 @@ class LitGnnFs(L.LightningModule):
             self.transform = lambda x: x
 
         self.tautype = cfg.tautype
-
         self.trainmode = cfg.trainmode # 0 uses all training nodes; 1 uses only root nodes
 
         # losses
@@ -347,7 +350,8 @@ class LitGnnFs(L.LightningModule):
 
         self.train_overall_acc = MulticlassAccuracy(average="weighted", **options)
         self.val_overall_acc = MulticlassAccuracy(average="weighted", **options)
-
+        self.val_f1_overall = MulticlassF1Score(average="weighted", **options)
+        
         self.test_overall_acc = MulticlassAccuracy(average="weighted", **options)
         self.test_macro_acc = MulticlassAccuracy(average="macro", **options)
         self.test_micro_acc = MulticlassAccuracy(average="micro", **options)
@@ -395,7 +399,7 @@ class LitGnnFs(L.LightningModule):
             xyz=data.x[:, data.xyz_ind],
             subgraph_id=data.subgraph_id,
             tau=tau_schedule(self.tautype, self.current_epoch, self.trainer.max_epochs),
-            hard_=False,
+            hard_=False
         )
         # conditionally remove "slow nodes" (from halfhop)
         if hasattr(data, "slow_node_mask"):
@@ -504,6 +508,7 @@ class LitGnnFs(L.LightningModule):
             val_loss_ce += val_loss_reg 
 
         self.val_overall_acc(preds=celltype_pred[idx], target=batch.celltype[idx]) # original
+        self.val_f1_overall(preds=celltype_pred[idx], target=batch.celltype[idx])
 
 
         self.val_macro_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
@@ -521,6 +526,7 @@ class LitGnnFs(L.LightningModule):
         self.log("val_loss_reg", val_loss_reg, **options) if self.model.fs_method == "scGist" else None
         self.log("val_overall_acc", self.val_overall_acc, **options)
         self.log("val_macro_acc", self.val_macro_acc, **options)
+        self.log("val_f1_overall", self.val_f1_overall, **options)
 
     def on_validation_epoch_end(self):
         pass
@@ -540,7 +546,7 @@ class LitGnnFs(L.LightningModule):
             xyz=data.x[:, data.xyz_ind],
             subgraph_id=data.subgraph_id,
             tau=tau_schedule(self.tautype, self.current_epoch, self.trainer.max_epochs),
-            hard_=True,
+            hard_=True
         )
 
         # conditionally remove "slow nodes" (from halfhop)
@@ -568,7 +574,7 @@ class LitGnnFs(L.LightningModule):
             xyz=data.x[:, data.xyz_ind],
             subgraph_id=data.subgraph_id,
             tau=tau_schedule(self.tautype, self.current_epoch, self.trainer.max_epochs),
-            hard_=True,
+            hard_=True
         )
 
         # conditionally remove "slow nodes" (from halfhop)

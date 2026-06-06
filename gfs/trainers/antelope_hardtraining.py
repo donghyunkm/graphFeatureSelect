@@ -40,8 +40,8 @@ def main(config: DictConfig):
     tb_logger = TensorBoardLogger(save_dir=log_path)
     checkpoint_callback = ModelCheckpoint(
         dirpath=checkpoint_path,
-        monitor="val_f1_overall",
-        filename="{epoch}-{val_f1_overall:.2f}",
+        monitor="val_overall_acc",
+        filename="{epoch}-{val_overall_acc:.2f}",
         mode="max",
         save_top_k=1,
         every_n_epochs=1,
@@ -65,7 +65,15 @@ def main(config: DictConfig):
     )
 
     # model
+    # ckpt_path = "/data/users1/dkim195/graphFeatureSelect/data/checkpoints/20260508_205422_isocortex_s10_500epochs_newdata_s42/epoch=431-val_overall_acc=0.85.ckpt"
+    # ckpt_path = "/data/users1/dkim195/graphFeatureSelect/data/checkpoints/20260509_213752_isocortex_s20_500epochs_newdata_s42/epoch=391-val_overall_acc=0.89.ckpt"
+    ckpt_path = "/data/users1/dkim195/graphFeatureSelect/data/checkpoints/20260511_033352_isocortex_s40_500epochs_newdata_s42/epoch=317-val_overall_acc=0.93.ckpt"
     model = LitGnnFs(config)
+    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    missing, unexpected = model.load_state_dict(ckpt["state_dict"], strict=False)
+    print("Missing keys:", missing)
+    print("Unexpected keys:", unexpected)
+
 
     # fit wrapper
     trainer = L.Trainer(
