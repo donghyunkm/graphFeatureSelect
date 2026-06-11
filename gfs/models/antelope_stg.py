@@ -282,6 +282,7 @@ class LitGnnFs(L.LightningModule):
 
         self.train_overall_acc = MulticlassAccuracy(average="weighted", **options)
         self.val_overall_acc = MulticlassAccuracy(average="weighted", **options)
+        self.val_f1_overall = MulticlassF1Score(average="weighted", **options)
 
         self.test_overall_acc = MulticlassAccuracy(average="weighted", **options)
         self.test_macro_acc = MulticlassAccuracy(average="macro", **options)
@@ -321,7 +322,7 @@ class LitGnnFs(L.LightningModule):
         elif self.trainmode == 1:
             # backprop/metrics for only "root" nodes, not neighbors
             idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0]
-        print("317 ", data.x.shape, len(data.gene_exp_ind))
+        # print("317 ", data.x.shape, len(data.gene_exp_ind))
         celltype_pred = self.forward(
             gene_exp=data.x[:, data.gene_exp_ind],
             edge_index=data.edge_index,
@@ -441,6 +442,7 @@ class LitGnnFs(L.LightningModule):
 
 
         self.val_overall_acc(preds=celltype_pred[idx], target=batch.celltype[idx]) # original
+        self.val_f1_overall(preds=celltype_pred[idx], target=batch.celltype[idx])
 
 
         self.val_macro_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
@@ -459,6 +461,7 @@ class LitGnnFs(L.LightningModule):
 
         self.log("val_overall_acc", self.val_overall_acc, **options)
         self.log("val_macro_acc", self.val_macro_acc, **options)
+        self.log("val_f1_overall", self.val_f1_overall, **options)
 
     def on_validation_epoch_end(self):
         pass

@@ -11,6 +11,23 @@ from torchvision.ops import sigmoid_focal_loss
 
 from gfs.models.transforms import HalfHop
 
+class GatingLayer(nn.Module):
+    '''To implement L1-based gating layer (so that we can compare L1 with L0(STG) in a fair way)
+    '''
+    def __init__(self, input_dim):
+        super(GatingLayer, self).__init__()
+        self.mu = torch.nn.Parameter(0.01*torch.randn(input_dim, ), requires_grad=True)
+    
+    def forward(self, prev_x):
+        new_x = prev_x * self.mu 
+        return new_x
+    
+    def regularizer(self, x):
+        ''' Gaussian CDF. '''
+        return torch.sum(torch.abs(x))
+
+
+
 class MLP(nn.Module):
     '''
     Multilayer perceptron (MLP) model.
@@ -93,13 +110,12 @@ class GnnFs(torch.nn.Module):
         xyz_status,
         fs_method,
         focal_loss,
-        lambda_l0_start,
-        lambda_l0_end
+        sigma,
+        lam
     ):
         super(GnnFs, self).__init__()
         self.fs_method = fs_method
 
-        self.logits = nn.Parameter(torch.full((gene_ch,), -3.0))
         self.dropout = dropout
 
         self.pre_linear = pre_linear
@@ -113,14 +129,17 @@ class GnnFs(torch.nn.Module):
         self.lins = torch.nn.ModuleList()
         self.lns = torch.nn.ModuleList()
         self.bns = torch.nn.ModuleList()
-        self.beta = 2/3      # temperature (lower => harder gates)
-        self.gamma = -0.1    # stretch lower
-        self.zeta = 1.1      # stretch upper
-        self.lambda_l0_start = lambda_l0_start
-        self.lambda_l0_end = lambda_l0_end
+
         self.n_select = n_select
         self.lin_in = torch.nn.Linear(gene_ch, hid_ch)
         self.focal_loss = focal_loss
+
+        self.GateingLayer = GatingLayer(gene_ch)
+        self.reg = self.GateingLayer.regularizer
+        self.mu = self.GateingLayer.mu
+
+        self.lam = lam
+
 
         if not self.pre_linear:
             if gnn == "gat":
@@ -173,57 +192,6 @@ class GnnFs(torch.nn.Module):
         self.logits.reset_parameters()
 
 
-    def nonzero_gate_prob(self):
-        """
-        Hard-concrete approximation of P(z > 0) from Louizos et al.
-        Used for expected L0 regularization and deterministic ranking.
-        """
-        ratio = torch.tensor(-self.gamma / self.zeta, device=self.logits.device, dtype=self.logits.dtype)
-        return torch.sigmoid(self.logits - self.beta * torch.log(ratio))
-
-    def sample_mask(self, x, training: bool):
-        """
-        Returns mask shaped like x: (batch, in_dim).
-        Training: stochastic, differentiable mask in [0,1].
-        Eval: deterministic hard top-k 0/1 mask.
-        """
-        bsz, in_dim = x.shape
-        logits = self.logits.view(1, in_dim).expand(bsz, in_dim)
-
-        if training:
-            # sample u ~ Uniform(0,1), concrete reparam
-            u = torch.rand_like(logits).clamp_(1e-6, 1 - 1e-6)
-            s = torch.sigmoid((logits + torch.log(u) - torch.log(1 - u)) / self.beta)
-
-            # stretch + hard-sigmoid (clamp)
-            s = s * (self.zeta - self.gamma) + self.gamma
-            mask = s.clamp(0.0, 1.0)
-        else:
-            # deterministic hard top-k mask
-            scores = self.nonzero_gate_prob()
-            topk_idx = torch.topk(scores, k=self.n_select).indices
-            hard_mask_1d = torch.zeros(in_dim, device=x.device, dtype=x.dtype)
-            hard_mask_1d[topk_idx] = 1.0
-            mask = hard_mask_1d.view(1, in_dim).expand(bsz, in_dim)
-
-        return mask
-
-    def l0_penalty(self):
-        """
-        Optional: expected number of active features (use as sparsity regularizer).
-        Add: loss += lambda_l0 * model.l0_penalty()
-        """
-        return self.nonzero_gate_prob().sum()
-
-    def get_mask_indices(self):
-
-        probs = self.nonzero_gate_prob().detach().cpu()
-        values, indices = torch.topk(probs, k=self.n_select)
-
-
-        return indices, values
-
-
 
     def forward(self, x, edge_index, xyz, subgraph_id, tau, hard_):
 
@@ -234,8 +202,7 @@ class GnnFs(torch.nn.Module):
         # print("xyz shape ", xyz.shape)
         # print("mask ", mask.shape)
 
-        mask = self.sample_mask(x, self.training)
-        x = x * mask
+        x = self.GateingLayer(x)
 
 
         if self.x_res:
@@ -276,6 +243,8 @@ class GnnFs(torch.nn.Module):
 
         return x
 
+    def get_gates(self):
+        return self.mu.detach().cpu().numpy()
 
 class LitGnnFs(L.LightningModule):
     def __init__(self, config):
@@ -304,8 +273,8 @@ class LitGnnFs(L.LightningModule):
             xyz_status=cfg.xyz_status,
             fs_method = cfg.fs_method,
             focal_loss = cfg.focal_loss,
-            lambda_l0_start = cfg.lambda_l0_start,
-            lambda_l0_end = cfg.lambda_l0_end
+            sigma = cfg.sigma,
+            lam = cfg.lam 
         )
 
         # related to training step
@@ -328,6 +297,7 @@ class LitGnnFs(L.LightningModule):
 
         self.train_overall_acc = MulticlassAccuracy(average="weighted", **options)
         self.val_overall_acc = MulticlassAccuracy(average="weighted", **options)
+        self.val_f1_overall = MulticlassF1Score(average="weighted", **options)
 
         self.test_overall_acc = MulticlassAccuracy(average="weighted", **options)
         self.test_macro_acc = MulticlassAccuracy(average="macro", **options)
@@ -360,11 +330,6 @@ class LitGnnFs(L.LightningModule):
         # calculate losses and metrics for all training nodes in the batch.
         batch_size = torch.sum(batch.train_mask)
         data = self.transform(batch)
-        progress = (self.current_epoch - 1) / max(self.trainer.max_epochs - 2, 1)
-        beta_start = 2/3
-        beta_end = 0.1
-
-        self.model.beta = beta_start + progress * (beta_end - beta_start)
 
         if self.trainmode == 0:
             # backprop/metrics for all nodes in batch (including neighbors)
@@ -372,7 +337,7 @@ class LitGnnFs(L.LightningModule):
         elif self.trainmode == 1:
             # backprop/metrics for only "root" nodes, not neighbors
             idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0]
-        print("317 ", data.x.shape, len(data.gene_exp_ind))
+        # print("317 ", data.x.shape, len(data.gene_exp_ind))
         celltype_pred = self.forward(
             gene_exp=data.x[:, data.gene_exp_ind],
             edge_index=data.edge_index,
@@ -399,10 +364,10 @@ class LitGnnFs(L.LightningModule):
         else:
             train_loss_ce = self.loss_ce(celltype_pred[idx], data.celltype[idx])
 
-        lambda_l0 = self.model.lambda_l0_start + progress * (self.model.lambda_l0_end - self.model.lambda_l0_start)
 
-        l0_loss = lambda_l0 * self.model.l0_penalty()
-        train_loss = train_loss_ce + l0_loss
+        reg = torch.mean(self.model.reg(self.model.mu))
+        train_loss = train_loss_ce + self.model.lam * reg
+
 
         # calculate metrics
 
@@ -420,7 +385,7 @@ class LitGnnFs(L.LightningModule):
         }
 
         self.log("train_loss_ce", train_loss_ce, **options)
-        self.log("l0_loss", l0_loss, **options)
+        self.log("reg", reg, **options)
 
         self.log("train_overall_acc", self.train_overall_acc, **options)
         self.log("train_macro_acc", self.train_macro_acc, **options)
@@ -430,14 +395,18 @@ class LitGnnFs(L.LightningModule):
     def on_train_epoch_end(self):
         # log gene selections and probabilities at the end of each epoch
 
-        mask_indices, mask_probs = self.model.get_mask_indices()
+        gates = self.model.get_gates()
+        ranked_features = sorted(
+            [(i, abs(g)) for i, g in enumerate(gates)],
+            key=lambda x: x[1],
+            reverse=True,
+        )
+
+
         metrics = {"epoch": self.current_epoch}
+        for i in range(len(ranked_features)):
+            metrics[f"sel_{i}"] = ranked_features[i]
 
-        for i in range(mask_indices.size(0)):
-            metrics[f"sel_{i}"] = mask_indices[i].item()
-
-        for i in range(mask_indices.size(0)):
-            metrics[f"prob_{i}"] = mask_probs[i].item()
 
         # get filepath of logger
         path = self.logger._root_dir + "/selections.csv"
@@ -447,6 +416,7 @@ class LitGnnFs(L.LightningModule):
             if not file_exists:
                 writer.writerow(metrics.keys())
             writer.writerow([v for v in metrics.values()])
+
         return
 
     def validation_step(self, batch, batch_idx):
@@ -486,15 +456,14 @@ class LitGnnFs(L.LightningModule):
         else:
             val_loss_ce = self.loss_ce(celltype_pred[idx], batch.celltype[idx])
 
-        progress = (self.current_epoch - 1) / max(self.trainer.max_epochs - 2, 1)
-        lambda_l0 = self.model.lambda_l0_start + progress * (self.model.lambda_l0_end - self.model.lambda_l0_start)
 
-        l0_loss = lambda_l0 * self.model.l0_penalty()
-        val_loss = val_loss_ce + l0_loss
+        reg = torch.mean(self.model.reg(self.model.mu))
+        val_loss = val_loss_ce + self.model.lam * reg
 
 
 
         self.val_overall_acc(preds=celltype_pred[idx], target=batch.celltype[idx]) # original
+        self.val_f1_overall(preds=celltype_pred[idx], target=batch.celltype[idx])
 
 
         self.val_macro_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
@@ -509,10 +478,11 @@ class LitGnnFs(L.LightningModule):
         }
 
         self.log("val_loss_ce", val_loss_ce, **options)
-        self.log("l0_loss", l0_loss, **options)
+        self.log("reg", reg, **options)
 
         self.log("val_overall_acc", self.val_overall_acc, **options)
         self.log("val_macro_acc", self.val_macro_acc, **options)
+        self.log("val_f1_overall", self.val_f1_overall, **options)
 
     def on_validation_epoch_end(self):
         pass
@@ -580,11 +550,10 @@ class LitGnnFs(L.LightningModule):
         else:
             test_loss_ce = self.loss_ce(celltype_pred[idx], batch.celltype[idx])
 
-        progress = (self.current_epoch - 1) / max(self.trainer.max_epochs - 2, 1)
-        lambda_l0 = self.model.lambda_l0_start + progress * (self.model.lambda_l0_end - self.model.lambda_l0_start)
 
-        l0_loss = lambda_l0 * self.model.l0_penalty()
-        test_loss = test_loss_ce + l0_loss
+        reg = torch.mean(self.model.reg(self.model.mu))
+        test_loss = test_loss_ce + self.model.lam * reg
+
 
         self.test_overall_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
         self.test_macro_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
@@ -604,7 +573,7 @@ class LitGnnFs(L.LightningModule):
         }
 
         self.log("test_loss_ce", test_loss_ce, **options)
-        self.log("l0_loss", l0_loss, **options)
+        self.log("reg", reg, **options)
 
         self.log("test_overall_acc", self.test_overall_acc, **options)
         self.log("test_macro_acc", self.test_macro_acc, **options)

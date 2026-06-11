@@ -42,7 +42,7 @@ model:
   fs_method: "persist"
   focal_loss: false
   sigma: 1.0
-  lam: 0.1
+  lam: 0.01
   hard_training: false
 
 logging:

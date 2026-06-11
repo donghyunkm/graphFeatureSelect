@@ -38,8 +38,8 @@ def main(config: DictConfig):
     tb_logger = TensorBoardLogger(save_dir=log_path)
     checkpoint_callback = ModelCheckpoint(
         dirpath=checkpoint_path,
-        monitor="val_overall_acc",
-        filename="{epoch}-{val_overall_acc:.2f}",
+        monitor="val_f1_overall",
+        filename="{epoch}-{val_f1_overall:.2f}",
         mode="max",
         save_top_k=1,
         every_n_epochs=1,
