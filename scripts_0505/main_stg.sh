@@ -22,4 +22,4 @@ sleep 10s
 export PATH=/data/users1/dkim195/miniconda3/bin:$PATH
 source /data/users1/dkim195/miniconda3/etc/profile.d/conda.sh
 conda activate /data/users1/dkim195/miniconda3/envs/gfs
-python ../gfs/trainers/antelope_stg.py data.prefix="stg_lam20_500epochs" trainer.lr=0.001 model.lam=20.0 trainer.max_epochs=500
+python ../gfs/trainers/antelope_stg.py data.prefix="stg_lam20_se0" model.lam=20.0 data.rand_seed=0
