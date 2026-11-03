@@ -1,0 +1,70 @@
+## Subclass-grouping variant 'glut' (10 labels: kept GLUT subclasses + 'other').
+## 2-hop baseline (trainmode=0), HalfHop OFF, n_select=5 -- the deep_sample (docs/20260820_deep_sample_shallow_loss.md)
+## experiment on the glut dataset. Built from full data via gfs/data/build_subclass_variant.py
+## (reuses the fine-stratified full-data val/test split). See docs/20260907_subclass_grouping_deep_sample.md.
+
+expname: "default"
+
+data:
+  name: "isocortex_glut"
+  path_train: "20260907_glut_classes/isocortex_train_final.h5ad"
+  path_valtest: "20260907_glut_classes/isocortex_valtest_final.h5ad"
+  n_genes: 500
+  n_labels: 10
+  cell_type: "subclass"
+  spatial_coords:
+    - "rec_ccf_x"
+    - "rec_ccf_y"
+    - "rec_ccf_z"
+  self_loops_only: false
+  batch_size: 64
+  n_hops: 2
+  num_workers: 16
+  rand_seed: 0
+  prefix: "glut_s10"
+model:
+  name: "antelope"
+  gene_ch: ${data.n_genes}
+  spatial_ch: 3 # should match length of spatial_coords
+  hid_ch: 32
+  out_ch: ${data.n_labels}
+  n_select: 5
+  local_layers: 2
+  dropout: 0.5
+  heads: 3
+  pre_linear: true
+  res: true
+  ln: true
+  bn: true
+  jk: true
+  x_res: true
+  gnn: "gat"
+  xyz_status: true
+  halfhop: false
+  tautype: "old"
+  trainmode: 0
+  loss: "ce"
+  fs_method: "persist"
+  focal_loss: false
+  sigma: 1.0
+  lam: 0.01
+  hard_training: false
+
+logging:
+  log_dir: "logs"
+  checkpoint_dir: "checkpoints"
+  on_step: false
+  on_epoch: true
+  prog_bar: true
+  logger: true
+
+trainer:
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0
+  max_epochs: 100
+  lr: 0.001
+  lr_scheduler: "constant"
+
+hydra:
+  run:
+    dir: "../../data/hydralogs/"

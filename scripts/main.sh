@@ -1,25 +1,19 @@
 #!/bin/bash
-#SBATCH --nodes=1 # Run all processes on a single node
-#SBATCH --ntasks=1 # Run a single task
-#SBATCH --cpus-per-task=8 # Number of CPU cores per task
-#SBATCH --mem=128g
-#SBATCH -p qTRDGPU
-#SBATCH --gres=gpu:1
-#SBATCH -t 7000
-#SBATCH -J comms
-#SBATCH -e ../error/error-comms-%A.err
-#SBATCH -o ../out/out-comms-%A.out
-#SBATCH -A trends53c17
+#SBATCH -p celltypes
+#SBATCH --job-name=gfs
+#SBATCH --nodes 1
+#SBATCH --mem=128G
+#SBATCH -c 8
+#SBATCH --gres=gpu:a100:1
+#SBATCH --time 60:00:00
+#SBATCH -e ../outs/error-comms-%A.err
+#SBATCH -o ../outs/out-comms-%A.out
 #SBATCH --mail-type=ALL
-#SBATCH --mail-user=dkim195@gsu.edu
-#SBATCH --oversubscribe
-#SBATCH --exclude=arctrdagn007
-#SBATCH --exclude=arctrdagn015
+#SBATCH --mail-user=donghyun.kim@alleninstitute.org
 
 
 sleep 10s
 
-export PATH=/data/users1/dkim195/miniconda3/bin:$PATH
-source /data/users1/dkim195/miniconda3/etc/profile.d/conda.sh
-conda activate /data/users1/dkim195/miniconda3/envs/gfs
-python ../gfs/trainers/antelope.py data.prefix="gfs_original_0430" 
+source /home/donghyun.kim/miniconda3/etc/profile.d/conda.sh
+conda activate gfs
+python -u ../gfs/trainers/antelope.py data.prefix="select15_seed0_tauold_500ep" model.n_select=15 data.rand_seed=0 model.tautype="old" trainer.max_epochs=500

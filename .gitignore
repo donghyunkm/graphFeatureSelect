@@ -166,3 +166,19 @@ cython_debug/
 
 # hydra logs
 outputs/
+
+# ---- project-specific ----
+# Slurm stdout/stderr (outs/ holds out-comms-<jobid>.out / error-comms-<jobid>.err)
+outs/
+out-comms-*.out
+error-comms-*.err
+
+# scratch analysis artifacts dumped at repo root (real figures/tables live in docs/)
+/*.png
+/*.csv
+/*.pkl
+
+# PyTorch Geometric / torch.jit modules generated in the CWD when training from scripts/
+torch_geometric.nn.*
+_remote_module_non_scriptable.py
+scripts/tmp*/

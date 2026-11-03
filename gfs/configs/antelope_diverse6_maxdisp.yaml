@@ -1,0 +1,71 @@
+## Diverse-6 (max-dispersion) variant: the 6 of the top-12-by-abundance subclasses whose mean expression
+## profiles are maximally spread (max total pairwise correlation/euclidean distance): 007 L2/3 IT Glut,
+## 052 Pvalb / 053 Sst Gaba, 319 Astro-TE / 327 Oligo / 333 Endo NN (1 Glut / 2 Gaba / 3 NN) + 'other' (7 lbl).
+## 2-hop baseline (trainmode=0), HalfHop OFF, n_select=5 -- deep_sample protocol (docs/20260820_deep_sample_shallow_loss.md).
+## Built from the default 22-label full data via gfs/data/build_subclass_variant.py. See docs/20260919_diverse6_maxdisp.md.
+
+expname: "default"
+
+data:
+  name: "isocortex_diverse6_maxdisp"
+  path_train: "20260919_diverse6_maxdisp/isocortex_train_final.h5ad"
+  path_valtest: "20260919_diverse6_maxdisp/isocortex_valtest_final.h5ad"
+  n_genes: 500
+  n_labels: 7
+  cell_type: "subclass"
+  spatial_coords:
+    - "rec_ccf_x"
+    - "rec_ccf_y"
+    - "rec_ccf_z"
+  self_loops_only: false
+  batch_size: 64
+  n_hops: 2
+  num_workers: 16
+  rand_seed: 0
+  prefix: "diverse6_maxdisp_s10"
+model:
+  name: "antelope"
+  gene_ch: ${data.n_genes}
+  spatial_ch: 3 # should match length of spatial_coords
+  hid_ch: 32
+  out_ch: ${data.n_labels}
+  n_select: 5
+  local_layers: 2
+  dropout: 0.5
+  heads: 3
+  pre_linear: true
+  res: true
+  ln: true
+  bn: true
+  jk: true
+  x_res: true
+  gnn: "gat"
+  xyz_status: true
+  halfhop: false
+  tautype: "old"
+  trainmode: 0
+  loss: "ce"
+  fs_method: "persist"
+  focal_loss: false
+  sigma: 1.0
+  lam: 0.01
+  hard_training: false
+
+logging:
+  log_dir: "logs"
+  checkpoint_dir: "checkpoints"
+  on_step: false
+  on_epoch: true
+  prog_bar: true
+  logger: true
+
+trainer:
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0
+  max_epochs: 100
+  lr: 0.001
+  lr_scheduler: "constant"
+
+hydra:
+  run:
+    dir: "../../data/hydralogs/"

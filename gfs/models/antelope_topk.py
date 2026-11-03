@@ -1,5 +1,12 @@
+"""Variant of ``antelope.py`` whose feature selector is a differentiable/stochastic top-k ``SubsetLayer``
+with a pluggable sampler backend (``gumbel`` / ``st-gumbel`` / ``sfess`` / ``simple`` / ``imle`` / ``pps``
+via ``get_subset_layer`` + ``gfs.models.get_sampler``); at eval it falls back to a hard top-k. Supports
+drawing ``num_samples`` subset masks per forward pass. GNN backbone and ``LitGnnFs`` scaffolding otherwise
+as in ``antelope.py``."""
+
 import csv
 import os
+from functools import partial
 
 import lightning as L
 import torch
@@ -9,15 +16,12 @@ from torch_geometric.nn import GATConv, GCNConv, SAGEConv
 from torchmetrics.classification import MulticlassAccuracy, MulticlassF1Score
 from torchvision.ops import sigmoid_focal_loss
 
-from gfs.models.transforms import HalfHop
 from gfs.models.get_sampler import SamplerArgs, get_sampler
 from gfs.models.samplers.sfess.sfess import score_function_estimator
-
-from functools import partial
+from gfs.models.transforms import HalfHop
 
 
 class SubsetLayer(nn.Module):
-
     def __init__(self, subset_layer, k, num_samples):
         super(SubsetLayer, self).__init__()
         self.subset = subset_layer
@@ -61,6 +65,7 @@ def get_subset_layer(k, args):
     subset_layer = SubsetLayer(sampler, k, args.num_samples)
     return subset_layer
 
+
 def get_sfe(args):
     estimator = {
         "sfess": "reinforce",
@@ -73,8 +78,9 @@ def get_sfe(args):
     }[args.sampler]
     return partial(score_function_estimator, estimator=estimator)
 
+
 class MLP(nn.Module):
-    '''
+    """
     Multilayer perceptron (MLP) model.
 
     Args:
@@ -82,20 +88,15 @@ class MLP(nn.Module):
       output_size: number of outputs.
       hidden: list of hidden layer widths.
       activation: nonlinearity between layers.
-    '''
+    """
 
-    def __init__(self,
-                 input_size,
-                 output_size,
-                 hidden,
-                 activation=nn.ReLU()):
+    def __init__(self, input_size, output_size, hidden, activation=nn.ReLU()):
         super().__init__()
 
         # Fully connected layers.
         self.input_size = input_size
         self.output_size = output_size
-        fc_layers = [nn.Linear(d_in, d_out) for d_in, d_out in
-                     zip([input_size] + hidden, hidden + [output_size])]
+        fc_layers = [nn.Linear(d_in, d_out) for d_in, d_out in zip([input_size] + hidden, hidden + [output_size])]
         self.fc = nn.ModuleList(fc_layers)
 
         # Activation function.
@@ -110,7 +111,9 @@ class MLP(nn.Module):
 
 
 class FeatureRegularizer(nn.Module):
-    def __init__(self, l1=0.1, panel_size=None, priority_score=None, pairs=None, alpha=0.5, beta=0.5, gamma=0.5, strict=True):
+    def __init__(
+        self, l1=0.1, panel_size=None, priority_score=None, pairs=None, alpha=0.5, beta=0.5, gamma=0.5, strict=True
+    ):
         super().__init__()
         self.l1 = 0.01 if l1 is None else l1
         self.alpha = alpha
@@ -127,7 +130,7 @@ class FeatureRegularizer(nn.Module):
 
     def forward(self, x):
         abs_x = torch.abs(x)
-        reg = torch.tensor(0., dtype=x.dtype, device=x.device)
+        reg = torch.tensor(0.0, dtype=x.dtype, device=x.device)
 
         # Force weights toward 0 or 1
         reg += torch.sum(abs_x * torch.abs(x - 1))
@@ -195,7 +198,7 @@ class GnnFs(torch.nn.Module):
         focal_loss,
         k,
         num_samples,
-        cfg_topk
+        cfg_topk,
     ):
         super(GnnFs, self).__init__()
         self.fs_method = fs_method
@@ -203,7 +206,7 @@ class GnnFs(torch.nn.Module):
         if self.fs_method == "persist":
             self.logits = nn.Parameter(torch.randn(n_select, gene_ch))
         elif self.fs_method == "scGist":
-            self.logits = nn.Parameter(torch.full((1, gene_ch), 0.5)) 
+            self.logits = nn.Parameter(torch.full((1, gene_ch), 0.5))
         elif self.fs_method == "topk":
             self.logits = nn.Parameter(torch.randn(gene_ch))
         self.dropout = dropout
@@ -258,13 +261,12 @@ class GnnFs(torch.nn.Module):
         self.pred_local = torch.nn.Linear(hid_ch, out_ch)
 
         if self.x_res:
-            # self.res_lin = torch.nn.Linear(gene_ch, out_ch) old 
-            self.res_lin = MLP(gene_ch, out_ch, [128, 128], nn.ReLU()) # new (from Persist)
+            # self.res_lin = torch.nn.Linear(gene_ch, out_ch) old
+            self.res_lin = MLP(gene_ch, out_ch, [128, 128], nn.ReLU())  # new (from Persist)
         if self.xyz_status:
             self.xyz_lin = torch.nn.Linear(spatial_ch, out_ch)
 
         self.subset_layer = get_subset_layer(self.k, self.cfg_topk)
-
 
     def reset_parameters(self):
         for layer in self.gnn_layers:
@@ -285,7 +287,6 @@ class GnnFs(torch.nn.Module):
         if logits.dim() == 1:
             logits = logits.expand(batch, -1)
 
-
         if self.training:
             if self.cfg_topk.subgraph:
                 n_subgraphs = subgraph_id.max() + 1
@@ -296,7 +297,7 @@ class GnnFs(torch.nn.Module):
                     # print("MASK295295 ", mask.shape) MASK295295  torch.Size([1, 1, 500])
                     # print("MASK295HARD ", mask) 10 1s,490 0s when hard sampling is used
                     mask_list.append(mask)
-                    self.extra = extra #??
+                    self.extra = extra  # ??
 
                 subgraph_id = subgraph_id.tolist()
                 # return_mask = mask_list[subgraph_id]
@@ -308,29 +309,29 @@ class GnnFs(torch.nn.Module):
                 mask, extra = self.subset_layer(logits.unsqueeze(-1), tau)
                 # print("MASK295295 ", mask.shape) MASK295295  torch.Size([1, 1, 500])
                 # print("MASK295HARD ", mask) 10 1s,490 0s when hard sampling is used
-                self.extra = extra #??
+                self.extra = extra  # ??
                 # print("EXTRA? ", self.extra)
                 mask = mask.squeeze()
                 # print("trainmask ", mask.shape)
                 return mask
 
         else:
-            indices = torch.topk(logits, self.k, dim=-1)[1] 
+            indices = torch.topk(logits, self.k, dim=-1)[1]
             mask = F.one_hot(indices, logits.size(-1)).sum(1)
             mask = mask.float()
             mask = mask.expand(self.num_samples, -1, -1)
             mask = mask.squeeze()
             return mask
 
-# SAMPLEMAASK
-# torch.Size([500]) 1
-# logits2  torch.Size([1, 500])
-# MASKVAL  torch.Size([1, 1, 500])
+    # SAMPLEMAASK
+    # torch.Size([500]) 1
+    # logits2  torch.Size([1, 500])
+    # MASKVAL  torch.Size([1, 1, 500])
 
-# SAMPLEMAASK
-# torch.Size([500]) 1
-# logits2  torch.Size([1, 500])
-# MASKTRAIN  torch.Size([1, 1, 500])
+    # SAMPLEMAASK
+    # torch.Size([500]) 1
+    # logits2  torch.Size([1, 500])
+    # MASKTRAIN  torch.Size([1, 1, 500])
 
     def get_mask(self, tau, subgraph_id):
         """
@@ -442,11 +443,11 @@ class LitGnnFs(L.LightningModule):
             x_res=cfg.x_res,
             gnn=cfg.gnn,
             xyz_status=cfg.xyz_status,
-            fs_method = cfg.fs_method,
-            focal_loss = cfg.focal_loss,
-            k = cfg_topk.k,
-            num_samples = cfg_topk.num_samples,
-            cfg_topk = cfg_topk
+            fs_method=cfg.fs_method,
+            focal_loss=cfg.focal_loss,
+            k=cfg_topk.k,
+            num_samples=cfg_topk.num_samples,
+            cfg_topk=cfg_topk,
         )
 
         # related to training step
@@ -458,11 +459,10 @@ class LitGnnFs(L.LightningModule):
 
         self.tautype = cfg.tautype
 
-        self.trainmode = cfg.trainmode # 0 uses all training nodes; 1 uses only root nodes
+        self.trainmode = cfg.trainmode  # 0 uses all training nodes; 1 uses only root nodes
 
-        
         self.sfe = get_sfe(cfg_topk)
-        
+
         self.k = cfg_topk.k
         # losses
         self.loss_ce = nn.CrossEntropyLoss()
@@ -540,17 +540,18 @@ class LitGnnFs(L.LightningModule):
 
         if self.model.fs_method == "scGist":
             train_loss_reg = self.model.feature_regularizer(self.model.logits) * 100
-            train_loss_ce += train_loss_reg 
+            train_loss_ce += train_loss_reg
 
         train_loss_ce = train_loss_ce.unsqueeze(0)
-        train_loss_ce = self.sfe(train_loss_ce, self.model.extra) # only methods that require score function estimates return something for .extra
+        train_loss_ce = self.sfe(
+            train_loss_ce, self.model.extra
+        )  # only methods that require score function estimates return something for .extra
         train_loss_ce = train_loss_ce.squeeze()
 
         # calculate metrics
 
         self.train_overall_acc(preds=celltype_pred[idx], target=data.celltype[idx])
         self.train_macro_acc(preds=celltype_pred[idx], target=data.celltype[idx])
-
 
         # log losses and metrics
         options = {
@@ -594,7 +595,7 @@ class LitGnnFs(L.LightningModule):
         # calculate losses and metrics for all nodes in the batch.
 
         batch_size = batch.input_id.size(0)
-        idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0] 
+        idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0]
         # metrics calculated for only "root" nodes, not neighbors
 
         # halfhop or pass-through
@@ -626,14 +627,11 @@ class LitGnnFs(L.LightningModule):
         else:
             val_loss_ce = self.loss_ce(celltype_pred[idx], batch.celltype[idx])
 
-
         if self.model.fs_method == "scGist":
             val_loss_reg = self.model.feature_regularizer(self.model.logits)
-            val_loss_ce += val_loss_reg 
+            val_loss_ce += val_loss_reg
 
-
-        self.val_overall_acc(preds=celltype_pred[idx], target=batch.celltype[idx]) # original
-
+        self.val_overall_acc(preds=celltype_pred[idx], target=batch.celltype[idx])  # original
 
         self.val_macro_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
 
@@ -685,7 +683,7 @@ class LitGnnFs(L.LightningModule):
         # calculate losses and metrics for all nodes in the batch.
 
         batch_size = batch.input_id.size(0)
-        idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0] 
+        idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0]
         # metrics calculated for only "root" nodes, not neighbors
 
         # halfhop or pass-through
@@ -717,7 +715,6 @@ class LitGnnFs(L.LightningModule):
         else:
             test_loss_ce = self.loss_ce(celltype_pred[idx], batch.celltype[idx])
 
-        
         self.test_overall_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
         self.test_macro_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
         self.test_micro_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
@@ -773,8 +770,8 @@ class LitGnnFs(L.LightningModule):
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode="min",
-            factor=0.5,      # reduce LR by half
-            patience=5,      # wait 5 epochs
+            factor=0.5,  # reduce LR by half
+            patience=5,  # wait 5 epochs
             threshold=1e-4,
             verbose=True,
         )
@@ -789,14 +786,13 @@ class LitGnnFs(L.LightningModule):
             },
         }
 
-
     # def configure_optimizers(self):
     #     optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.trainer.lr)
 
     #     multistep_scheduler = torch.optim.lr_scheduler.MultiStepLR(
     #         optimizer,
     #         milestones=[100],
-    #         gamma=0.1 
+    #         gamma=0.1
     #     )
 
     #     if self.hparams.trainer.lr_scheduler == "multistep":
@@ -811,16 +807,17 @@ class LitGnnFs(L.LightningModule):
     #                 "frequency": 1
     #             }
     #         }
-            
+
     #     elif self.hparams.trainer.lr_scheduler == "constant":
     #         return optimizer
 
+
 def tau_schedule(type, epoch, total_epoch):
     start_tau = 10
-    end_tau = 0.01 
+    end_tau = 0.01
     # end_tau = 0.1
 
-    if type == 'exp':
+    if type == "exp":
         tau = start_tau * (end_tau / start_tau) ** (epoch / total_epoch)
     elif type == "constant":
         tau = 0.1

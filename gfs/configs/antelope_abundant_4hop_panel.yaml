@@ -1,0 +1,76 @@
+## Frozen gene panel + 4-hop complete-field training on the ABUNDANT 7-label subset.
+## Abundant counterpart of antelope_4hop_panel.yaml (full data). Feature-ablation arm: same as
+## antelope_abundant_4hop.yaml (n_hops=4, loss_hops=2, trainmode=2) EXCEPT fs_method="none" — no
+## selector, the frozen PERSIST panel is the input. Compared against the abundant 4-hop with-selection
+## HalfHop-OFF runs (docs/20260820_deep_sample_shallow_loss.md, n_select=5, seeds 0-4). HalfHop OFF to
+## match that reference. See docs/feature_ablation_abundant.md and gfs/trainers/antelope_4hop_panel.py.
+
+expname: "default"
+
+data:
+  name: "isocortex_abundant_4hop_panel"
+  path_train: "0810_abudant_classes_only_top6/isocortex_train_final.h5ad"
+  path_valtest: "0810_abudant_classes_only_top6/isocortex_valtest_final.h5ad"
+  # the frozen panel (0-indexed into var, AnnData default). Placeholder = full-data PERSIST seed-0;
+  # overridden per seed in main_abundant_4hop_panel_seeds.sh with the ABUNDANT PERSIST panels. Reported at startup.
+  genes: [2, 12, 174, 435, 480]
+  n_genes: 5
+  n_labels: 7
+  cell_type: "subclass"
+  spatial_coords:
+    - "rec_ccf_x"
+    - "rec_ccf_y"
+    - "rec_ccf_z"
+  self_loops_only: false
+  batch_size: 64
+  n_hops: 4       # train sampling depth = 2 * loss_hops (completes loss nodes' fields)
+  loss_hops: 2    # message-passing depth (== model.local_layers)
+  num_workers: 16
+  rand_seed: 0
+  prefix: "abundant_4hop_panel_s10"
+model:
+  name: "antelope"
+  gene_ch: ${data.n_genes} # the panel is the input; no 500-gene mask
+  spatial_ch: 3 # should match length of spatial_coords
+  hid_ch: 32
+  out_ch: ${data.n_labels}
+  n_select: ${data.n_genes} # unused when fs_method="none"; kept for logging
+  local_layers: 2
+  dropout: 0.5
+  heads: 3
+  pre_linear: true
+  res: true
+  ln: true
+  bn: true
+  jk: true
+  x_res: true
+  gnn: "gat"
+  xyz_status: true
+  halfhop: false  # matches the abundant 4-hop select-5 HalfHop-OFF arm it is compared against
+  tautype: "old"  # unused when fs_method="none"
+  trainmode: 2    # loss on nodes within loss_hops of a seed (complete receptive field)
+  loss: "ce"
+  fs_method: "none" # no selection module
+  focal_loss: false
+  sigma: 1.0
+  lam: 0.01
+  hard_training: false
+
+logging:
+  log_dir: "logs"
+  checkpoint_dir: "checkpoints"
+  on_step: false
+  on_epoch: true
+  prog_bar: true
+  logger: true
+
+trainer:
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0
+  max_epochs: 100
+  lr: 0.001
+  lr_scheduler: "constant"
+
+hydra:
+  run:
+    dir: "../../data/hydralogs/"

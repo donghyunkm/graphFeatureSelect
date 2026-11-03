@@ -1,16 +1,23 @@
+"""PERSIST baseline training entrypoint: fits ``persist.LitPersist`` on the older ``hemisphere`` data
+module (``n_splits``/``cv`` folds, config ``antelope``), monitors ``val_overall_acc``, and pickles
+``predict`` outputs to ``pred_y.pkl`` instead of running ``test``."""
+
+import pickle
+import random
+
 import hydra
 import lightning as L
+import numpy as np
+import torch
 from lightning.pytorch import seed_everything
-from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
+from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
 from omegaconf import DictConfig, OmegaConf
-import pickle
+
 from gfs.data.hemisphere import PyGAnnDataGraphDataModule
 from gfs.models.persist import LitPersist
 from gfs.utils import get_datetime, get_paths
-import torch
-import random
-import numpy as np
+
 
 def setup_seeds(seed):
     random.seed(seed)
@@ -19,6 +26,7 @@ def setup_seeds(seed):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
 
 @hydra.main(config_path="../configs", config_name="antelope", version_base="1.2")
 def main(config: DictConfig):
@@ -45,8 +53,7 @@ def main(config: DictConfig):
         every_n_epochs=1,
     )
 
-    lr_monitor = LearningRateMonitor(logging_interval='step')
-
+    lr_monitor = LearningRateMonitor(logging_interval="step")
 
     # data
     datamodule = PyGAnnDataGraphDataModule(
@@ -73,16 +80,17 @@ def main(config: DictConfig):
         max_epochs=config.trainer.max_epochs,
         logger=tb_logger,
         callbacks=[checkpoint_callback, lr_monitor],
-        accelerator="gpu", 
+        accelerator="gpu",
         devices=1,
-        deterministic=True
+        deterministic=True,
         # accelerator="cpu"
     )
     trainer.fit(model=model, datamodule=datamodule)
     pred_y = trainer.predict(ckpt_path="best", datamodule=datamodule)
-    
-    with open(checkpoint_path + '/pred_y.pkl', 'wb') as file:
+
+    with open(checkpoint_path + "/pred_y.pkl", "wb") as file:
         pickle.dump(pred_y, file)
+
 
 if __name__ == "__main__":
     main()

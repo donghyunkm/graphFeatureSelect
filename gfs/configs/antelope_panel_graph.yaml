@@ -1,0 +1,81 @@
+## Frozen gene panel, graph KEPT. Isolates noise-robustness from annealing/co-adaptation.
+## See gfs/data/hemisphere_new_panel.py for the arm table, and gfs/trainers/antelope_panel_graph.py.
+##
+## shuffle_cells: true  -> noisy random neighbours, no selector  => tests noise-robustness
+## shuffle_cells: false -> intact graph, no selector             => "does the graph help at all"
+
+expname: "default"
+
+data:
+  name: "isocortex_panel_graph"
+  path_train: "isocortex_train_final.h5ad"
+  path_valtest: "isocortex_valtest_final.h5ad"
+  # the frozen panel. Default = the panel all 5 shuffle seeds converged on.
+  genes: [2, 12, 83, 435, 480]
+  n_genes: 5
+  n_labels: 22
+  cell_type: "subclass"
+  spatial_coords:
+    - "rec_ccf_x"
+    - "rec_ccf_y"
+    - "rec_ccf_z"
+  # permute cells (expression+labels together) as in hemisphere_new_shuffle.py
+  shuffle_cells: true
+  self_loops_only: false # the broken branch; keep false (see CLAUDE.md Known rough edges)
+  # 64 / 2 hops = the graph arm's values, so per-cell exposure is the graph's own ~64.84
+  # loss terms/epoch by construction. No upsampling needed in this arm.
+  batch_size: 64
+  n_hops: 2
+  num_workers: 8
+  rand_seed: 0
+  prefix: "panelgraph_shuffle"
+
+model:
+  name: "antelope_panel_graph"
+  gene_ch: ${data.n_genes} # the panel is the input; no 500-gene mask
+  spatial_ch: 3
+  hid_ch: 32
+  out_ch: ${data.n_labels}
+  n_select: ${data.n_genes} # unused when fs_method="none"
+  local_layers: 2
+  dropout: 0.5
+  heads: 3
+  pre_linear: true
+  res: true
+  ln: true
+  bn: true # dead config (ln takes precedence)
+  jk: true
+  x_res: true
+  gnn: "gat"
+  # true, matching the shuffle arm this is compared against (NOT the tabular baseline's false).
+  # The point of this arm is to differ from the shuffle GNN in exactly one way: no selector.
+  xyz_status: true
+  halfhop: true # live here, unlike under self-edges where it inserts nothing
+  tautype: "old" # unused when fs_method="none"
+  trainmode: 0
+  loss: "ce"
+  fs_method: "none" # no selection module
+  focal_loss: false
+  sigma: 1.0
+  lam: 0.01
+  hard_training: false
+
+logging:
+  log_dir: "logs"
+  checkpoint_dir: "checkpoints"
+  on_step: false
+  on_epoch: true
+  prog_bar: true
+  logger: true
+
+trainer:
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0
+  # 100, matching the shuffle runs this is compared against
+  max_epochs: 100
+  lr: 0.001
+  lr_scheduler: "constant"
+
+hydra:
+  run:
+    dir: "../../data/hydralogs/"

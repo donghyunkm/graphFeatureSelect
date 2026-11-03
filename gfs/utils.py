@@ -1,3 +1,7 @@
+"""Shared helpers: timestamped experiment names (`get_datetime`), AnnData loading with CCF
+xyz coordinates stacked into ``obsm["ccf"]`` and genes indexed by symbol (`get_adata`), and
+repo path/config lookup from ``config.toml`` (`get_paths`)."""
+
 from datetime import datetime
 from pathlib import Path
 

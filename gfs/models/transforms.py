@@ -1,3 +1,6 @@
+"""Graph/data transforms used by the models. Provides ``HalfHop``, the graph-upsampling augmentation
+that inserts artificial "slow" nodes between neighbors to slow down message passing (Azabou et al.)."""
+
 import torch
 from torch_geometric.data import Data
 from torch_geometric.data.datapipes import functional_transform

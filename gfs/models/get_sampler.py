@@ -1,3 +1,7 @@
+"""Factory for the top-k subset samplers used by the ``antelope_topk*`` models: a ``SamplerArgs`` config
+holder plus ``get_sampler()``, which dispatches to the vendored ``gumbel`` / ``imle`` / ``pps`` / ``sfess``
+/ ``simple`` sampler implementations under ``gfs.models.samplers``."""
+
 from gfs.models.samplers.gumbel_scheme import GumbelSampler
 from gfs.models.samplers.imle_scheme import IMLESampler
 from gfs.models.samplers.pps.pps import PPSSampler

@@ -1,3 +1,9 @@
+"""Standard graph data module: cells aligned to their real spatial-graph nodes. Reads separate
+train and val/test AnnData files, builds PyG ``Data`` objects, and takes the val/test split from
+pre-computed ``val_mask``/``test_mask`` columns in ``adata.obs`` (rather than an internal CV split).
+Serves ``n_hops`` NeighborLoader patches; ``NeighborLoaderMod`` tags each node's ``subgraph_id``."""
+
+import random
 import warnings
 
 import anndata as ad
@@ -10,11 +16,10 @@ from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.preprocessing import LabelEncoder
 from torch_geometric.data import Data as PyGData
 from torch_geometric.loader.neighbor_loader import NeighborLoader
-import random
+
 from gfs.utils import get_paths
 
 warnings.filterwarnings("ignore", category=ImplicitModificationWarning, message="Transforming to str index.")
-
 
 
 def read_check_h5ad(path):
@@ -22,6 +27,7 @@ def read_check_h5ad(path):
     for field in ["spatial_connectivities"]:
         assert field in adata.obsp.keys(), f"{field} absent: Run `sklearn.neighbors.kneighbors_graph` first for {path}"
     return adata
+
 
 class PyGAnnData:
     """
@@ -67,15 +73,13 @@ class PyGAnnData:
             adj.setdiag(0)  # removing self-loops
             self.adj_valtest = adj
 
-
         self.cell_type = cell_type
         self.spatial_coords = spatial_coords
-        
+
         self.cell_type_list = adata_train.obs[cell_type].cat.categories.tolist()
         self.cell_type_labelencoder = LabelEncoder()
         self.cell_type_labelencoder.fit(self.cell_type_list)
         self.data_issparse = issparse(adata_train.X)
-
 
     def convert_torch_sparse_coo(self, adj):
         coo_matrix = adj.tocoo()
@@ -119,7 +123,7 @@ class PyGAnnData:
             num_nodes=gene_exp.shape[0],
             gene_exp_ind=gene_exp_ind,
             xyz_ind=xyz_ind,
-            train_mask = torch.ones(x.shape[0], dtype=torch.bool)
+            train_mask=torch.ones(x.shape[0], dtype=torch.bool),
         )
 
     def get_pygdata_obj_valtest(self):
@@ -145,8 +149,8 @@ class PyGAnnData:
         gene_exp_ind = torch.arange(gene_exp.shape[1])
         xyz_ind = torch.arange(gene_exp.shape[1], gene_exp.shape[1] + xyz.shape[1])
 
-        val_mask = torch.tensor(self.adata_valtest.obs["val_mask"], dtype=torch.bool)
-        test_mask = torch.tensor(self.adata_valtest.obs["test_mask"], dtype=torch.bool)
+        val_mask = torch.tensor(self.adata_valtest.obs["val_mask"].to_numpy(dtype=bool), dtype=torch.bool)
+        test_mask = torch.tensor(self.adata_valtest.obs["test_mask"].to_numpy(dtype=bool), dtype=torch.bool)
 
         return PyGData(
             x=x,
@@ -157,7 +161,7 @@ class PyGAnnData:
             gene_exp_ind=gene_exp_ind,
             xyz_ind=xyz_ind,
             val_mask=val_mask,
-            test_mask=test_mask
+            test_mask=test_mask,
         )
 
 
@@ -217,12 +221,13 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
         self.spatial_coords = spatial_coords
         self.rand_seed = rand_seed
         self.self_loops_only = self_loops_only
+
     def setup(self, stage: str):
         # including self.dataset for debugging.
         # consider removing this if we run into cpu memory limits.
         self.dataset = PyGAnnData(
-            path_train = self.path_train,
-            path_valtest = self.path_valtest,
+            path_train=self.path_train,
+            path_valtest=self.path_valtest,
             spatial_coords=self.spatial_coords,
             cell_type=self.cell_type,
             self_loops_only=self.self_loops_only,
@@ -241,7 +246,7 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
             shuffle=True,
             num_workers=8,
             worker_init_fn=seed_worker,
-            generator=torch.Generator().manual_seed(42)
+            generator=torch.Generator().manual_seed(42),
         )
         return NeighborLoaderMod(og, self.n_hops)
 
@@ -254,7 +259,7 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
             shuffle=False,
             num_workers=8,
             worker_init_fn=seed_worker,
-            generator=torch.Generator().manual_seed(42)
+            generator=torch.Generator().manual_seed(42),
         )
         return NeighborLoaderMod(og, self.n_hops)
 
@@ -267,13 +272,13 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
             shuffle=False,
             num_workers=8,
             worker_init_fn=seed_worker,
-            generator=torch.Generator().manual_seed(42)
+            generator=torch.Generator().manual_seed(42),
         )
         return NeighborLoaderMod(og, self.n_hops)
+
 
 def seed_worker(worker_id):
     # worker_seed = torch.initial_seed() % 2**32
     worker_seed = 42
     np.random.seed(worker_seed)
     random.seed(worker_seed)
-

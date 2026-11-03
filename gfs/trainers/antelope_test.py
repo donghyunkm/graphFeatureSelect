@@ -1,16 +1,23 @@
+"""Test-only entrypoint: evaluates ``antelope.LitGnnFs`` from a hardcoded checkpoint path (no ``fit``)
+on the older ``hemisphere`` data module (``file_names``/``test_names``, ``n_splits``/``cv`` folds).
+Monitors ``val_overall_acc`` on the (unused) checkpoint callback."""
+
+import pickle
+import random
+
 import hydra
 import lightning as L
+import numpy as np
+import torch
 from lightning.pytorch import seed_everything
-from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
+from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
 from omegaconf import DictConfig, OmegaConf
-import pickle
+
 from gfs.data.hemisphere import PyGAnnDataGraphDataModule
 from gfs.models.antelope import LitGnnFs
 from gfs.utils import get_datetime, get_paths
-import torch
-import random
-import numpy as np
+
 
 def setup_seeds(seed):
     random.seed(seed)
@@ -19,6 +26,7 @@ def setup_seeds(seed):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
 
 @hydra.main(config_path="../configs", config_name="antelope", version_base="1.2")
 def main(config: DictConfig):
@@ -45,8 +53,7 @@ def main(config: DictConfig):
         every_n_epochs=1,
     )
 
-    lr_monitor = LearningRateMonitor(logging_interval='step')
-
+    lr_monitor = LearningRateMonitor(logging_interval="step")
 
     # data
     datamodule = PyGAnnDataGraphDataModule(
@@ -74,9 +81,9 @@ def main(config: DictConfig):
         max_epochs=config.trainer.max_epochs,
         logger=tb_logger,
         callbacks=[checkpoint_callback, lr_monitor],
-        accelerator="gpu", 
+        accelerator="gpu",
         devices=1,
-        deterministic=True
+        deterministic=True,
         # accelerator="cpu"
     )
     path = "/data/users1/dkim195/graphFeatureSelect/data/checkpoints/20250926_072021_celltype_0925_select80_s42_f-1/epoch=203-val_overall_acc=0.87.ckpt"

@@ -1,0 +1,85 @@
+## Frozen-gene-panel baseline evaluation.
+## No graph (self-edges only), no selection module, trained on the upsampled tabular dataset so
+## gradient updates match the graph run exactly. See gfs/trainers/antelope_panel.py.
+
+expname: "default"
+
+data:
+  name: "isocortex_panel"
+  # dir written by `python -m gfs.data.node_exposure --materialize --emit-valtest`
+  exposure_dir: "exposure/persist_seed0_select5"
+  path_train: "isocortex_train_final.h5ad"
+  path_valtest: "isocortex_valtest_final.h5ad"
+  # the frozen panel, for the record: must match the --genes used to build exposure_dir.
+  # asserted against the h5ad's var at startup.
+  genes: [2, 250, 435, 480, 481]
+  n_genes: 5
+  n_labels: 22
+  cell_type: "subclass"
+  spatial_coords:
+    - "rec_ccf_x"
+    - "rec_ccf_y"
+    - "rec_ccf_z"
+  # 4147 = the graph run's measured mean patch size -> 1167 steps/epoch, the same as the graph
+  # run, with the same 1/4147 per-row weight in the batch mean. Do not change without also
+  # scaling max_epochs to hold total step count.
+  batch_size: 4147
+  num_workers: 8
+  # false -> 1167 steps/epoch exactly (final batch 3999 rows). The graph run's patch sizes also
+  # vary (561-4425, mean 4147), so a ragged final batch matches it; drop_last=true would give 1166.
+  drop_last: false
+  rand_seed: 42
+  prefix: "panel_persist_s0"
+
+model:
+  name: "antelope_panel"
+  gene_ch: ${data.n_genes} # the panel is the input; no 500-gene mask
+  spatial_ch: 3
+  hid_ch: 32
+  out_ch: ${data.n_labels}
+  n_select: ${data.n_genes} # unused when fs_method="none"; kept for logging
+  local_layers: 2
+  dropout: 0.5
+  heads: 3
+  pre_linear: true
+  res: true
+  ln: true
+  bn: true # dead config: `if self.ln: ... elif self.bn:` and ln=true, so BatchNorm never runs
+  jk: true
+  x_res: true
+  gnn: "gat"
+  # false, matching the observed baseline run (out-comms-3521173.out). The graph arm uses true,
+  # but its per-patch centring is meaningless with 1-node patches, so xyz carries ~nothing here.
+  xyz_status: false
+  # inert under self-edges anyway: transforms.py:58-61 excludes self-loops from half-hopping,
+  # so zero slow nodes get inserted. false to make that explicit rather than silently a no-op.
+  halfhop: false
+  tautype: "old" # unused when fs_method="none"
+  trainmode: 0 # loss over every row in the batch, as in the graph run
+  loss: "ce"
+  fs_method: "none" # no selection module
+  focal_loss: false
+  sigma: 1.0
+  lam: 0.01
+  hard_training: false
+
+logging:
+  log_dir: "logs"
+  checkpoint_dir: "checkpoints"
+  on_step: false
+  on_epoch: true
+  prog_bar: true
+  logger: true
+
+trainer:
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0
+  # the graph arm runs 100; the panel baseline plateaus by ~epoch 5 (see CLAUDE.md), and each
+  # epoch here is already 1167 steps, so 100 is ample. Kept at 100 for symmetry with the graph arm.
+  max_epochs: 100
+  lr: 0.001
+  lr_scheduler: "constant"
+
+hydra:
+  run:
+    dir: "../../data/hydralogs/"

@@ -1,0 +1,81 @@
+## Deep-sample / shallow-loss (4-hop) config on the FULL 22-label isocortex data.
+## Full-data counterpart of antelope_abundant_4hop.yaml. Compared against the 2-hop baseline
+## (antelope.yaml, trainmode=0) at matched settings; see docs/4hop_2hop_comparison.md.
+## Train samples n_hops=4 and takes loss only on nodes within loss_hops=2 of a seed
+## (complete 2-hop receptive field, via batch.loss_mask). Message passing stays 2 hops
+## (local_layers=2). Val/test are root-only. Use with trainer antelope_4hop.py.
+
+expname: "default"
+
+data:
+  name: "isocortex"
+  path_train: "isocortex_train_final.h5ad"
+  path_valtest: "isocortex_valtest_final.h5ad"
+  n_genes: 500
+  n_labels: 22
+  cell_type: "subclass"
+  spatial_coords:
+    - "rec_ccf_x"
+    - "rec_ccf_y"
+    - "rec_ccf_z"
+  self_loops_only: false
+  batch_size: 64  # matches the 2-hop baseline (antelope.yaml) for a direct comparison
+  n_hops: 4       # train sampling depth = 2 * loss_hops (completes loss nodes' fields)
+  loss_hops: 2    # message-passing depth (== model.local_layers); loss on nodes within this many hops of a seed
+  num_workers: 16
+  rand_seed: 42
+  prefix: "full_4hop_s10"
+model:
+  name: "antelope"
+  gene_ch: ${data.n_genes}
+  spatial_ch: 3 # should match length of spatial_coords
+  hid_ch: 32
+  out_ch: ${data.n_labels}
+  n_select: 5
+  local_layers: 2
+  dropout: 0.5
+  heads: 3
+  pre_linear: true
+  res: true
+  ln: true
+  bn: true
+  jk: true
+  x_res: true
+  gnn: "gat"
+  xyz_status: true
+  halfhop: true
+  tautype: "old"
+  trainmode: 2    # loss on nodes within loss_hops of a seed (complete receptive field)
+  loss: "ce"
+  fs_method: "persist"
+  focal_loss: false
+  sigma: 1.0
+  lam: 0.01
+  hard_training: false
+  # GR2ST-style GATv2 attention-entropy regularization (auxiliary training loss only).
+  # 0.0 disables it and preserves the ordinary GAT forward path (default). Requires gnn="gat".
+  attention_entropy_weight: 0.0
+  attention_entropy_eps: 1.0e-9
+  # Log attention entropy + neighbourhood-sharpness diagnostics WITHOUT applying the loss. Set true on the
+  # baseline (weight=0) arm so its attention stats are directly comparable to a regularized run. Requires
+  # gnn="gat". Numerically free (bit-identical logits); off by default.
+  log_attention_stats: false
+
+logging:
+  log_dir: "logs"
+  checkpoint_dir: "checkpoints"
+  on_step: false
+  on_epoch: true
+  prog_bar: true
+  logger: true
+
+trainer:
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0
+  max_epochs: 100
+  lr: 0.001
+  lr_scheduler: "constant"
+
+hydra:
+  run:
+    dir: "../../data/hydralogs/"

@@ -1,0 +1,75 @@
+## Frozen gene panel + 4-hop complete-field training on the FULL 22-label data.
+## Feature-ablation arm: same as antelope_4hop.yaml (n_hops=4, loss_hops=2, trainmode=2) EXCEPT
+## fs_method="none" — no selector, the frozen panel is the input. Compared against the 4-hop
+## with-selection runs (main_fulldata_4hop_seeds.sh). See docs/feature_ablation.md and
+## gfs/trainers/antelope_4hop_panel.py. HalfHop OFF to match the 4-hop select-5 arm it is compared to.
+
+expname: "default"
+
+data:
+  name: "isocortex_4hop_panel"
+  path_train: "isocortex_train_final.h5ad"
+  path_valtest: "isocortex_valtest_final.h5ad"
+  # the frozen panel (0-indexed into var, AnnData default). Default = PERSIST seed-0 select-5;
+  # overridden per seed in main_fulldata_4hop_panel_seeds.sh. Reported at startup.
+  genes: [2, 250, 435, 480, 481]
+  n_genes: 5
+  n_labels: 22
+  cell_type: "subclass"
+  spatial_coords:
+    - "rec_ccf_x"
+    - "rec_ccf_y"
+    - "rec_ccf_z"
+  self_loops_only: false
+  batch_size: 64
+  n_hops: 4       # train sampling depth = 2 * loss_hops (completes loss nodes' fields)
+  loss_hops: 2    # message-passing depth (== model.local_layers)
+  num_workers: 16
+  rand_seed: 42
+  prefix: "full_4hop_panel_s10"
+model:
+  name: "antelope"
+  gene_ch: ${data.n_genes} # the panel is the input; no 500-gene mask
+  spatial_ch: 3 # should match length of spatial_coords
+  hid_ch: 32
+  out_ch: ${data.n_labels}
+  n_select: ${data.n_genes} # unused when fs_method="none"; kept for logging
+  local_layers: 2
+  dropout: 0.5
+  heads: 3
+  pre_linear: true
+  res: true
+  ln: true
+  bn: true
+  jk: true
+  x_res: true
+  gnn: "gat"
+  xyz_status: true
+  halfhop: false  # matches the 4-hop select-5 arm (main_fulldata_4hop_seeds.sh) it is compared against
+  tautype: "old"  # unused when fs_method="none"
+  trainmode: 2    # loss on nodes within loss_hops of a seed (complete receptive field)
+  loss: "ce"
+  fs_method: "none" # no selection module
+  focal_loss: false
+  sigma: 1.0
+  lam: 0.01
+  hard_training: false
+
+logging:
+  log_dir: "logs"
+  checkpoint_dir: "checkpoints"
+  on_step: false
+  on_epoch: true
+  prog_bar: true
+  logger: true
+
+trainer:
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0
+  max_epochs: 100
+  lr: 0.001
+  lr_scheduler: "constant"
+
+hydra:
+  run:
+    dir: "../../data/hydralogs/"

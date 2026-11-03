@@ -1,3 +1,8 @@
+"""Variant of ``antelope.py`` built around a Concrete/Gumbel-softmax feature-selection layer (a learned
+per-slot ``logits`` matrix over genes, Jang et al. 2016) rather than the configurable ``fs_method``
+selector. Uses ``GATConv`` and additionally tracks regression (MSE) alongside classification metrics;
+sibling experiment arm to ``antelope.py``."""
+
 import csv
 import os
 
@@ -8,10 +13,12 @@ import torch.nn.functional as F
 from torch_geometric.nn import GATConv, GCNConv, SAGEConv
 from torchmetrics.classification import MulticlassAccuracy
 from torchmetrics.regression import MeanSquaredError
+
 from gfs.models.transforms import HalfHop
 
+
 class MLP(nn.Module):
-    '''
+    """
     Multilayer perceptron (MLP) model.
 
     Args:
@@ -19,20 +26,15 @@ class MLP(nn.Module):
       output_size: number of outputs.
       hidden: list of hidden layer widths.
       activation: nonlinearity between layers.
-    '''
+    """
 
-    def __init__(self,
-                 input_size,
-                 output_size,
-                 hidden,
-                 activation=nn.ReLU()):
+    def __init__(self, input_size, output_size, hidden, activation=nn.ReLU()):
         super().__init__()
 
         # Fully connected layers.
         self.input_size = input_size
         self.output_size = output_size
-        fc_layers = [nn.Linear(d_in, d_out) for d_in, d_out in
-                     zip([input_size] + hidden, hidden + [output_size])]
+        fc_layers = [nn.Linear(d_in, d_out) for d_in, d_out in zip([input_size] + hidden, hidden + [output_size])]
         self.fc = nn.ModuleList(fc_layers)
 
         # Activation function.
@@ -86,7 +88,7 @@ class GnnFs(torch.nn.Module):
         bn,
         jk,
         x_res,
-        gnn
+        gnn,
     ):
         super(GnnFs, self).__init__()
 
@@ -136,8 +138,8 @@ class GnnFs(torch.nn.Module):
         self.pred_local = torch.nn.Linear(hid_ch, out_ch)
 
         if self.x_res:
-            # self.res_lin = torch.nn.Linear(gene_ch, out_ch) old 
-            self.res_lin = MLP(gene_ch, out_ch, [128, 128], nn.ReLU()) # new (from Persist)
+            # self.res_lin = torch.nn.Linear(gene_ch, out_ch) old
+            self.res_lin = MLP(gene_ch, out_ch, [128, 128], nn.ReLU())  # new (from Persist)
 
     def reset_parameters(self):
         for layer in self.gnn_layers:
@@ -245,7 +247,7 @@ class LitGnnFs(L.LightningModule):
             bn=cfg.bn,
             jk=cfg.jk,
             x_res=cfg.x_res,
-            gnn=cfg.gnn
+            gnn=cfg.gnn,
         )
 
         # related to training step
@@ -257,7 +259,7 @@ class LitGnnFs(L.LightningModule):
 
         self.tautype = cfg.tautype
 
-        self.trainmode = cfg.trainmode # 0 uses all training nodes; 1 uses only root nodes
+        self.trainmode = cfg.trainmode  # 0 uses all training nodes; 1 uses only root nodes
 
         # losses
         if cfg.loss == "mse":
@@ -306,7 +308,7 @@ class LitGnnFs(L.LightningModule):
             edge_index=data.edge_index,
             subgraph_id=data.subgraph_id,
             tau=tau_schedule(self.tautype, self.current_epoch, self.trainer.max_epochs),
-            hard_=False
+            hard_=False,
         )
 
         # conditionally remove "slow nodes" (from halfhop)
@@ -317,18 +319,17 @@ class LitGnnFs(L.LightningModule):
         print("314 ", data.x.shape)
         print("315 ", torch.max(data.xyz_ind))
         print("316 ", idx.shape)
-# 314  torch.Size([12022, 503])
-# 315  tensor(502, device='cuda:0')
-# 316  torch.Size([3191])
-
+        # 314  torch.Size([12022, 503])
+        # 315  tensor(502, device='cuda:0')
+        # 316  torch.Size([3191])
 
         # xyz = data.x[:, data.xyz_ind][idx]
         # train_loss_x = self.loss_mse(loc_pred[idx][:,0], xyz[:,0])
         # train_loss_y = self.loss_mse(loc_pred[idx][:,1], xyz[:,1])
         # train_loss_z = self.loss_mse(loc_pred[idx][:,2], xyz[:,2])
-        train_loss_x = self.loss(loc_pred[idx,0], data.xyz[idx, 0])
-        train_loss_y = self.loss(loc_pred[idx,1], data.xyz[idx, 1])
-        train_loss_z = self.loss(loc_pred[idx,2], data.xyz[idx, 2])
+        train_loss_x = self.loss(loc_pred[idx, 0], data.xyz[idx, 0])
+        train_loss_y = self.loss(loc_pred[idx, 1], data.xyz[idx, 1])
+        train_loss_z = self.loss(loc_pred[idx, 2], data.xyz[idx, 2])
 
         train_loss = train_loss_x + train_loss_y + train_loss_z
         # calculate metrics
@@ -386,7 +387,7 @@ class LitGnnFs(L.LightningModule):
             edge_index=data.edge_index,
             subgraph_id=data.subgraph_id,
             tau=tau_schedule(self.tautype, self.current_epoch, self.trainer.max_epochs),
-            hard_=True
+            hard_=True,
         )
 
         # conditionally remove "slow nodes" (from halfhop)
@@ -395,9 +396,9 @@ class LitGnnFs(L.LightningModule):
 
         # calculate losses and metrics
         # print("382 ", data.x[:, data.xyz_ind].shape) # torch.Size([11437, 3])
-        val_loss_x = self.loss(loc_pred[idx,0], data.xyz[idx, 0])
-        val_loss_y = self.loss(loc_pred[idx,1], data.xyz[idx, 1])
-        val_loss_z = self.loss(loc_pred[idx,2], data.xyz[idx, 2])
+        val_loss_x = self.loss(loc_pred[idx, 0], data.xyz[idx, 0])
+        val_loss_y = self.loss(loc_pred[idx, 1], data.xyz[idx, 1])
+        val_loss_z = self.loss(loc_pred[idx, 2], data.xyz[idx, 2])
         val_loss = val_loss_x + val_loss_y + val_loss_z
 
         # self.val_overall_acc(preds=torch.flatten(loc_pred[idx]), target=torch.flatten(data.xyz[idx]))
@@ -433,7 +434,7 @@ class LitGnnFs(L.LightningModule):
             edge_index=data.edge_index,
             subgraph_id=data.subgraph_id,
             tau=tau_schedule(self.tautype, self.current_epoch, self.trainer.max_epochs),
-            hard_=True
+            hard_=True,
         )
 
         # conditionally remove "slow nodes" (from halfhop)
@@ -448,11 +449,7 @@ class LitGnnFs(L.LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.trainer.lr)
 
-        multistep_scheduler = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer,
-            milestones=[100],
-            gamma=0.1 
-        )
+        multistep_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100], gamma=0.1)
 
         if self.hparams.trainer.lr_scheduler == "multistep":
             return {
@@ -463,19 +460,20 @@ class LitGnnFs(L.LightningModule):
                     # interval="epoch" means scheduler is called at epoch boundaries
                     # frequency=1 means scheduler is called every interval (every epoch)
                     # e.g. frequency=2 would call scheduler every 2 epochs
-                    "frequency": 1
-                }
+                    "frequency": 1,
+                },
             }
-            
+
         elif self.hparams.trainer.lr_scheduler == "constant":
             return optimizer
 
+
 def tau_schedule(type, epoch, total_epoch):
     start_tau = 10
-    end_tau = 0.01 
+    end_tau = 0.01
     # end_tau = 0.1
 
-    if type == 'exp':
+    if type == "exp":
         tau = start_tau * (end_tau / start_tau) ** (epoch / total_epoch)
     elif type == "constant":
         tau = 0.1

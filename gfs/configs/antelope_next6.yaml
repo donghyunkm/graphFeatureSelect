@@ -1,0 +1,71 @@
+## Abundant-style variant 'next-6': ranks 7-12 by cell count (005 L5 IT / 022 L5 ET / 032 L5 NP Glut,
+## 052 Pvalb / 053 Sst Gaba, 327 Oligo NN) + 'other' (7 labels). Sibling of antelope_abundant (top-6);
+## 2-hop baseline (trainmode=0), HalfHop OFF, n_select=5 -- the deep_sample (docs/20260820_deep_sample_shallow_loss.md)
+## protocol on the next-6 dataset. Built from the default 22-label full data via gfs/data/build_subclass_variant.py
+## (reuses the fine-stratified full-data val/test split). See docs/20260919_abundant_next6.md.
+
+expname: "default"
+
+data:
+  name: "isocortex_next6"
+  path_train: "20260919_abundant_next6/isocortex_train_final.h5ad"
+  path_valtest: "20260919_abundant_next6/isocortex_valtest_final.h5ad"
+  n_genes: 500
+  n_labels: 7
+  cell_type: "subclass"
+  spatial_coords:
+    - "rec_ccf_x"
+    - "rec_ccf_y"
+    - "rec_ccf_z"
+  self_loops_only: false
+  batch_size: 64
+  n_hops: 2
+  num_workers: 16
+  rand_seed: 0
+  prefix: "next6_s10"
+model:
+  name: "antelope"
+  gene_ch: ${data.n_genes}
+  spatial_ch: 3 # should match length of spatial_coords
+  hid_ch: 32
+  out_ch: ${data.n_labels}
+  n_select: 5
+  local_layers: 2
+  dropout: 0.5
+  heads: 3
+  pre_linear: true
+  res: true
+  ln: true
+  bn: true
+  jk: true
+  x_res: true
+  gnn: "gat"
+  xyz_status: true
+  halfhop: false
+  tautype: "old"
+  trainmode: 0
+  loss: "ce"
+  fs_method: "persist"
+  focal_loss: false
+  sigma: 1.0
+  lam: 0.01
+  hard_training: false
+
+logging:
+  log_dir: "logs"
+  checkpoint_dir: "checkpoints"
+  on_step: false
+  on_epoch: true
+  prog_bar: true
+  logger: true
+
+trainer:
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0
+  max_epochs: 100
+  lr: 0.001
+  lr_scheduler: "constant"
+
+hydra:
+  run:
+    dir: "../../data/hydralogs/"

@@ -1,3 +1,10 @@
+"""Original graph data module for the isocortex hemisphere dataset (predecessor of
+``hemisphere_new.py``). Loads AnnData, keeps cell types with >=5 cells, builds one PyG ``Data``
+object, and derives train/val/test masks internally via a 3-way ``StratifiedKFold3`` CV split.
+``PyGAnnDataGraphDataModule`` serves ``n_hops`` NeighborLoader patches (``NeighborLoaderMod`` tags
+each node's ``subgraph_id``). The module bottom holds ad-hoc test/inspection helpers."""
+
+import random
 import warnings
 
 import anndata as ad
@@ -10,18 +17,18 @@ from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.preprocessing import LabelEncoder
 from torch_geometric.data import Data as PyGData
 from torch_geometric.loader.neighbor_loader import NeighborLoader
-import random
+
 from gfs.utils import get_paths
 
 warnings.filterwarnings("ignore", category=ImplicitModificationWarning, message="Transforming to str index.")
 
-class StratifiedKFold3(StratifiedKFold):
 
+class StratifiedKFold3(StratifiedKFold):
     def split(self, X, y, groups=None):
         s = super().split(X, y, groups)
         for train_indxs, test_indxs in s:
             y_train = y[train_indxs]
-            train_indxs, cv_indxs = train_test_split(train_indxs,stratify=y_train, test_size=(1 / (self.n_splits - 1)))
+            train_indxs, cv_indxs = train_test_split(train_indxs, stratify=y_train, test_size=(1 / (self.n_splits - 1)))
             yield train_indxs, cv_indxs, test_indxs
 
 
@@ -64,7 +71,7 @@ class PyGAnnData:
         n_splits=5,
         cv=0,
         rand_seed=42,
-        test_data=False
+        test_data=False,
     ):
         super().__init__()
         self.paths = paths
@@ -102,7 +109,6 @@ class PyGAnnData:
             adj.setdiag(0)  # removing self-loops
             self.adj = adj
 
-
         self.cell_type = cell_type
         cell_type_col = adata.obs[self.cell_type]
         cell_type_counts = cell_type_col.value_counts()
@@ -110,16 +116,12 @@ class PyGAnnData:
         mask = cell_type_col.isin(valid_cell_types)
         self.adata = adata[mask]
 
-
-
         self.spatial_coords = spatial_coords
-        
+
         self.cell_type_list = adata.obs[cell_type].cat.categories.tolist()
         self.cell_type_labelencoder = LabelEncoder()
         self.cell_type_labelencoder.fit(self.cell_type_list)
         self.data_issparse = issparse(adata.X)
-
-
 
         # reproducible train/val split for crossvalidation 5 folds using StratifiedKFold
         self.cv = cv
@@ -134,7 +136,6 @@ class PyGAnnData:
         skf = StratifiedKFold3(n_splits=self.n_splits, shuffle=True, random_state=42)
         splits = skf.split(self.adata, self.adata.obs[self.cell_type])
         self.train_ind, self.val_ind, self.test_ind = list(splits)[self.cv]
-
 
     def convert_torch_sparse_coo(self, adj):
         coo_matrix = adj.tocoo()
@@ -175,10 +176,10 @@ class PyGAnnData:
         test_mask[self.test_ind] = True
 
         print("146 ", self.paths, self.paths[0])
-        if self.cv < 0: # for normal model
-            train_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec/train_mask.pt')
-            val_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec/val_mask.pt')
-            test_mask = torch.load('/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec/test_mask.pt')
+        if self.cv < 0:  # for normal model
+            train_mask = torch.load("/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec/train_mask.pt")
+            val_mask = torch.load("/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec/val_mask.pt")
+            test_mask = torch.load("/data/users1/dkim195/graphFeatureSelect/data/masks_one_sec/test_mask.pt")
 
         # if self.cv < 0: #for top10 subclass only
         #     print("CV < 0")
@@ -270,6 +271,7 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
         self.cv = cv
         self.rand_seed = rand_seed
         self.self_loops_only = self_loops_only
+
     def setup(self, stage: str):
         # including self.dataset for debugging.
         # consider removing this if we run into cpu memory limits.
@@ -282,7 +284,7 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
             n_splits=self.n_splits,
             cv=self.cv,
             rand_seed=self.rand_seed,
-            test_data=False
+            test_data=False,
         )
         self.data = self.dataset.get_pygdata_obj()
 
@@ -299,7 +301,6 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
         # )
         # self.data_test = self.dataset_test.get_pygdata_obj()
 
-
     def train_dataloader(self):
         og = NeighborLoader(
             self.data,
@@ -309,7 +310,7 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
             num_workers=8,
             input_nodes=self.data.train_mask,
             worker_init_fn=seed_worker,
-            generator=torch.Generator().manual_seed(42)
+            generator=torch.Generator().manual_seed(42),
         )
         return NeighborLoaderMod(og, self.n_hops)
 
@@ -322,7 +323,7 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
             shuffle=False,
             num_workers=8,
             worker_init_fn=seed_worker,
-            generator=torch.Generator().manual_seed(42)
+            generator=torch.Generator().manual_seed(42),
         )
         return NeighborLoaderMod(og, self.n_hops)
 
@@ -335,7 +336,7 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
             shuffle=False,
             num_workers=8,
             worker_init_fn=seed_worker,
-            generator=torch.Generator().manual_seed(42)
+            generator=torch.Generator().manual_seed(42),
         )
         return NeighborLoaderMod(og, self.n_hops)
 
@@ -361,9 +362,10 @@ class PyGAnnDataGraphDataModule(L.LightningDataModule):
             shuffle=False,
             num_workers=8,
             worker_init_fn=seed_worker,
-            generator=torch.Generator().manual_seed(42)
+            generator=torch.Generator().manual_seed(42),
         )
         return NeighborLoaderMod(og, self.n_hops)
+
 
 def seed_worker(worker_id):
     # worker_seed = torch.initial_seed() % 2**32
@@ -447,16 +449,15 @@ def numnodes_pyganndatagraphdatamodule_train():
     # datamodule.data.train_mask
 
     dataloader = iter(datamodule.train_dataloader())
-    print("Num samples in train ", torch.sum(datamodule.data.train_mask)) # Num samples in train  tensor(46333)
+    print("Num samples in train ", torch.sum(datamodule.data.train_mask))  # Num samples in train  tensor(46333)
     sum_nodes = 0
     for i, batch in enumerate(dataloader):
         sum_nodes += len(batch.input_id)
 
-    print("sum input nodes: ", sum_nodes) # sum input nodes:  46333
+    print("sum input nodes: ", sum_nodes)  # sum input nodes:  46333
     print("numnodes checks passed")
 
     return
-
 
 
 def input_id_check():
@@ -483,18 +484,15 @@ def input_id_check():
     # datamodule.data.train_mask
 
     dataloader = iter(datamodule.train_dataloader())
-    print("Num samples in train ", torch.sum(datamodule.data.train_mask)) # Num samples in train  
+    print("Num samples in train ", torch.sum(datamodule.data.train_mask))  # Num samples in train
     sum_nodes = 0
     for i, batch in enumerate(dataloader):
         idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0]
         sum_nodes += len(idx)
-    print("sum n_id nodes: ", sum_nodes) # sum n_id nodes:  46333
+    print("sum n_id nodes: ", sum_nodes)  # sum n_id nodes:  46333
     print("numnodes checks passed")
 
     return
-
-
-
 
 
 def numnodes_pyganndatagraphdatamodule():
@@ -521,15 +519,16 @@ def numnodes_pyganndatagraphdatamodule():
     # datamodule.data.train_mask
 
     dataloader = iter(datamodule.val_dataloader())
-    print("Num samples in val ", torch.sum(datamodule.data.val_mask)) # Num samples in val  tensor(11584)
+    print("Num samples in val ", torch.sum(datamodule.data.val_mask))  # Num samples in val  tensor(11584)
     sum_nodes = 0
     for i, batch in enumerate(dataloader):
         sum_nodes += len(batch.input_id)
 
-    print("sum input nodes: ", sum_nodes) # sum input nodes:  11584
+    print("sum input nodes: ", sum_nodes)  # sum input nodes:  11584
     print("numnodes checks passed")
 
     return
+
 
 def numnodes_pyganndatagraphdatamodule2():
     import numpy as np
@@ -541,7 +540,7 @@ def numnodes_pyganndatagraphdatamodule2():
     datamodule = PyGAnnDataGraphDataModule(
         data_dir=path,
         file_names=["test_one_section_hemi.h5ad"],
-        batch_size=4, # seed/root nodes
+        batch_size=4,  # seed/root nodes
         n_hops=2,
         cell_type="subclass",
         spatial_coords=["x_section", "y_section", "z_section"],
@@ -555,12 +554,12 @@ def numnodes_pyganndatagraphdatamodule2():
     # datamodule.data.train_mask
 
     dataloader = iter(datamodule.val_dataloader())
-    print("Num samples in val ", torch.sum(datamodule.data.val_mask)) # Num samples in val  tensor(11584)
+    print("Num samples in val ", torch.sum(datamodule.data.val_mask))  # Num samples in val  tensor(11584)
     sum_nodes = 0
     for i, batch in enumerate(dataloader):
         sum_nodes += int(torch.sum(batch.val_mask))
- 
-    print("sum input nodes: ", sum_nodes) # sum all neighboring nodes and input nodes:  126495
+
+    print("sum input nodes: ", sum_nodes)  # sum all neighboring nodes and input nodes:  126495
     print("numnodes checks passed")
 
     return
@@ -588,8 +587,9 @@ def test_pyganndata():
 
 
 def test_seed():
-    from gfs.data.hemisphere import PyGAnnDataGraphDataModule
     from lightning.pytorch import seed_everything
+
+    from gfs.data.hemisphere import PyGAnnDataGraphDataModule
     from gfs.utils import get_paths
 
     path = get_paths()["data_root"]
@@ -599,7 +599,7 @@ def test_seed():
         datamodule = PyGAnnDataGraphDataModule(
             data_dir=path,
             file_names=["test_one_section_hemi.h5ad"],
-            batch_size=2, # seed nodes
+            batch_size=2,  # seed nodes
             n_hops=2,
             cell_type="subclass",
             spatial_coords=["x_section", "y_section", "z_section"],
@@ -614,11 +614,12 @@ def test_seed():
         batch = next(dataloader)
         print(batch)
 
-    # check if dataloader returns same batch for different rand seed 
+    # check if dataloader returns same batch for different rand seed
 
     print("random seed checks passed")
 
     return
+
 
 def mask_test():
     import numpy as np
@@ -669,8 +670,7 @@ def mask_test():
     val_nodes = []
     for i, batch in enumerate(dataloader2):
         val_nodes = val_nodes + batch.n_id[batch.val_mask].tolist()
-    
-    
+
     set1 = set(train_nodes)
     set2 = set(val_nodes)
 

@@ -6,6 +6,13 @@
  Here we develop a feature selection approach to improve gene panel selection for such profiling experiments. 
 
 
+### Results
+
+See [`docs/conclusion.md`](docs/conclusion.md) for the headline findings (does the spatial graph help
+classification? does the learned panel beat baselines?), with links to the underlying experiment docs.
+The full write-up index is in [`docs/README.md`](docs/README.md).
+
+
 ### Environment
 
 ```bash

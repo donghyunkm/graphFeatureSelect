@@ -1,3 +1,8 @@
+"""Variant of ``antelope.py`` whose feature selector is STG stochastic gates (``FeatureSelector``:
+Gaussian-relaxed L0 with learned ``mu``/``sigma`` and a Gaussian-CDF regularizer, Yamada et al. 2020) —
+the L0 counterpart to the L1 gating in ``antelope_l1.py``. GNN backbone and ``LitGnnFs`` scaffolding are
+otherwise the same as ``antelope.py``."""
+
 import csv
 import os
 
@@ -9,11 +14,12 @@ from torch_geometric.nn import GATv2Conv, GCNConv, SAGEConv
 from torchmetrics.classification import MulticlassAccuracy, MulticlassF1Score
 from torchvision.ops import sigmoid_focal_loss
 
-from gfs.models.transforms import HalfHop
 from gfs.models.stg.layers import FeatureSelector
+from gfs.models.transforms import HalfHop
+
 
 class MLP(nn.Module):
-    '''
+    """
     Multilayer perceptron (MLP) model.
 
     Args:
@@ -21,20 +27,15 @@ class MLP(nn.Module):
       output_size: number of outputs.
       hidden: list of hidden layer widths.
       activation: nonlinearity between layers.
-    '''
+    """
 
-    def __init__(self,
-                 input_size,
-                 output_size,
-                 hidden,
-                 activation=nn.ReLU()):
+    def __init__(self, input_size, output_size, hidden, activation=nn.ReLU()):
         super().__init__()
 
         # Fully connected layers.
         self.input_size = input_size
         self.output_size = output_size
-        fc_layers = [nn.Linear(d_in, d_out) for d_in, d_out in
-                     zip([input_size] + hidden, hidden + [output_size])]
+        fc_layers = [nn.Linear(d_in, d_out) for d_in, d_out in zip([input_size] + hidden, hidden + [output_size])]
         self.fc = nn.ModuleList(fc_layers)
 
         # Activation function.
@@ -46,7 +47,6 @@ class MLP(nn.Module):
             x = self.activation(x)
 
         return self.fc[-1](x)
-
 
 
 class GnnFs(torch.nn.Module):
@@ -95,7 +95,7 @@ class GnnFs(torch.nn.Module):
         fs_method,
         focal_loss,
         sigma,
-        lam
+        lam,
     ):
         super(GnnFs, self).__init__()
         self.fs_method = fs_method
@@ -120,12 +120,11 @@ class GnnFs(torch.nn.Module):
 
         self.FeatureSelector = FeatureSelector(gene_ch, sigma)
 
-        self.reg = self.FeatureSelector.regularizer 
+        self.reg = self.FeatureSelector.regularizer
         self.mu = self.FeatureSelector.mu
         self.sigma = self.FeatureSelector.sigma
 
         self.lam = lam
-
 
         if not self.pre_linear:
             if gnn == "gat":
@@ -157,8 +156,8 @@ class GnnFs(torch.nn.Module):
         self.pred_local = torch.nn.Linear(hid_ch, out_ch)
 
         if self.x_res:
-            # self.res_lin = torch.nn.Linear(gene_ch, out_ch) old 
-            self.res_lin = MLP(gene_ch, out_ch, [128, 128], nn.ReLU()) # new (from Persist)
+            # self.res_lin = torch.nn.Linear(gene_ch, out_ch) old
+            self.res_lin = MLP(gene_ch, out_ch, [128, 128], nn.ReLU())  # new (from Persist)
         if self.xyz_status:
             self.xyz_lin = torch.nn.Linear(spatial_ch, out_ch)
 
@@ -177,8 +176,6 @@ class GnnFs(torch.nn.Module):
         self.xyz_lin.reset_parameters()
         self.logits.reset_parameters()
 
-
-
     def forward(self, x, edge_index, xyz, subgraph_id, tau, hard_):
 
         for id in subgraph_id.unique():
@@ -189,8 +186,6 @@ class GnnFs(torch.nn.Module):
         # print("mask ", mask.shape)
 
         x = self.FeatureSelector(x)
-
-
 
         if self.x_res:
             x_to_add = self.res_lin(x)
@@ -256,10 +251,10 @@ class LitGnnFs(L.LightningModule):
             x_res=cfg.x_res,
             gnn=cfg.gnn,
             xyz_status=cfg.xyz_status,
-            fs_method = cfg.fs_method,
-            focal_loss = cfg.focal_loss,
-            sigma = cfg.sigma,
-            lam = cfg.lam 
+            fs_method=cfg.fs_method,
+            focal_loss=cfg.focal_loss,
+            sigma=cfg.sigma,
+            lam=cfg.lam,
         )
 
         # related to training step
@@ -271,7 +266,7 @@ class LitGnnFs(L.LightningModule):
 
         self.tautype = cfg.tautype
 
-        self.trainmode = cfg.trainmode # 0 uses all training nodes; 1 uses only root nodes
+        self.trainmode = cfg.trainmode  # 0 uses all training nodes; 1 uses only root nodes
 
         # losses
         self.loss_ce = nn.CrossEntropyLoss()
@@ -349,8 +344,7 @@ class LitGnnFs(L.LightningModule):
         else:
             train_loss_ce = self.loss_ce(celltype_pred[idx], data.celltype[idx])
 
-
-        reg = torch.mean(self.model.reg((self.model.mu + 0.5)/self.model.sigma)) 
+        reg = torch.mean(self.model.reg((self.model.mu + 0.5) / self.model.sigma))
 
         train_loss = train_loss_ce + self.model.lam * reg
 
@@ -358,7 +352,6 @@ class LitGnnFs(L.LightningModule):
 
         self.train_overall_acc(preds=celltype_pred[idx], target=data.celltype[idx])
         self.train_macro_acc(preds=celltype_pred[idx], target=data.celltype[idx])
-
 
         # log losses and metrics
         options = {
@@ -402,7 +395,7 @@ class LitGnnFs(L.LightningModule):
         # calculate losses and metrics for all nodes in the batch.
 
         batch_size = batch.input_id.size(0)
-        idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0] 
+        idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0]
         # metrics calculated for only "root" nodes, not neighbors
 
         # halfhop or pass-through
@@ -435,15 +428,12 @@ class LitGnnFs(L.LightningModule):
         else:
             val_loss_ce = self.loss_ce(celltype_pred[idx], batch.celltype[idx])
 
-        reg = torch.mean(self.model.reg((self.model.mu + 0.5)/self.model.sigma)) 
+        reg = torch.mean(self.model.reg((self.model.mu + 0.5) / self.model.sigma))
 
         val_loss = val_loss_ce + self.model.lam * reg
 
-
-
-        self.val_overall_acc(preds=celltype_pred[idx], target=batch.celltype[idx]) # original
+        self.val_overall_acc(preds=celltype_pred[idx], target=batch.celltype[idx])  # original
         self.val_f1_overall(preds=celltype_pred[idx], target=batch.celltype[idx])
-
 
         self.val_macro_acc(preds=celltype_pred[idx], target=batch.celltype[idx])
 
@@ -497,7 +487,7 @@ class LitGnnFs(L.LightningModule):
         # calculate losses and metrics for all nodes in the batch.
 
         batch_size = batch.input_id.size(0)
-        idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0] 
+        idx = torch.where(batch.n_id == batch.input_id.unsqueeze(-1))[0]
         # metrics calculated for only "root" nodes, not neighbors
 
         # halfhop or pass-through
@@ -529,8 +519,7 @@ class LitGnnFs(L.LightningModule):
         else:
             test_loss_ce = self.loss_ce(celltype_pred[idx], batch.celltype[idx])
 
-
-        reg = torch.mean(self.model.reg((self.model.mu + 0.5)/self.model.sigma)) 
+        reg = torch.mean(self.model.reg((self.model.mu + 0.5) / self.model.sigma))
 
         test_loss = test_loss_ce + self.model.lam * reg
 
@@ -581,16 +570,10 @@ class LitGnnFs(L.LightningModule):
         path = self.logger._root_dir + "/test_pred.pt"
         torch.save({"predictions": all_predictions, "labels": all_labels}, path)
 
-
-
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.trainer.lr)
 
-        multistep_scheduler = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer,
-            milestones=[100],
-            gamma=0.1 
-        )
+        multistep_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100], gamma=0.1)
 
         if self.hparams.trainer.lr_scheduler == "multistep":
             return {
@@ -601,19 +584,20 @@ class LitGnnFs(L.LightningModule):
                     # interval="epoch" means scheduler is called at epoch boundaries
                     # frequency=1 means scheduler is called every interval (every epoch)
                     # e.g. frequency=2 would call scheduler every 2 epochs
-                    "frequency": 1
-                }
+                    "frequency": 1,
+                },
             }
-            
+
         elif self.hparams.trainer.lr_scheduler == "constant":
             return optimizer
 
+
 def tau_schedule(type, epoch, total_epoch):
     start_tau = 10
-    end_tau = 0.01 
+    end_tau = 0.01
     # end_tau = 0.1
 
-    if type == 'exp':
+    if type == "exp":
         tau = start_tau * (end_tau / start_tau) ** (epoch / total_epoch)
     elif type == "constant":
         tau = 0.1

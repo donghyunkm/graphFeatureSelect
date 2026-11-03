@@ -1,3 +1,7 @@
+"""Standalone PERSIST-style selector baseline: a no-graph MLP classifier plus a Concrete/Gumbel-softmax
+gene-selection mask (learned ``logits``), wrapped in the ``LitPersist`` Lightning module. Used as the
+non-graph PERSIST baseline, independent of the GNN in ``antelope.py``."""
+
 import csv
 import os
 
@@ -10,8 +14,9 @@ from torchmetrics.classification import MulticlassAccuracy
 
 from gfs.models.transforms import HalfHop
 
+
 class MLP(nn.Module):
-    '''
+    """
     Multilayer perceptron (MLP) model.
 
     Args:
@@ -19,20 +24,15 @@ class MLP(nn.Module):
       output_size: number of outputs.
       hidden: list of hidden layer widths.
       activation: nonlinearity between layers.
-    '''
+    """
 
-    def __init__(self,
-                 input_size,
-                 output_size,
-                 hidden,
-                 activation=nn.ReLU()):
+    def __init__(self, input_size, output_size, hidden, activation=nn.ReLU()):
         super().__init__()
 
         # Fully connected layers.
         self.input_size = input_size
         self.output_size = output_size
-        fc_layers = [nn.Linear(d_in, d_out) for d_in, d_out in
-                     zip([input_size] + hidden, hidden + [output_size])]
+        fc_layers = [nn.Linear(d_in, d_out) for d_in, d_out in zip([input_size] + hidden, hidden + [output_size])]
         self.fc = nn.ModuleList(fc_layers)
 
         # Activation function.
@@ -59,14 +59,7 @@ class Persist(torch.nn.Module):
         n_select (int): number of features to select
     """
 
-    def __init__(
-        self,
-        gene_ch,
-        hid_ch,
-        out_ch,
-        n_select,
-        mask_type
-    ):
+    def __init__(self, gene_ch, hid_ch, out_ch, n_select, mask_type):
         super(Persist, self).__init__()
 
         self.logits = nn.Parameter(torch.randn(n_select, gene_ch))
@@ -85,18 +78,22 @@ class Persist(torch.nn.Module):
             # sample has dims (n_selections, n_subgraphs, n_features)
 
             if self.mask_type == 0:
-                sample = F.gumbel_softmax(self.logits.unsqueeze(1).repeat(1, n_subgraphs, 1), tau=tau, hard=False, dim=-1) # -> original (1 mask per subgraph)
+                sample = F.gumbel_softmax(
+                    self.logits.unsqueeze(1).repeat(1, n_subgraphs, 1), tau=tau, hard=False, dim=-1
+                )  # -> original (1 mask per subgraph)
             else:
-                sample = F.gumbel_softmax(self.logits.unsqueeze(1).repeat(1, len(x), 1), tau=tau, hard=False, dim=-1) # use this to sample 1 mask for each cell
+                sample = F.gumbel_softmax(
+                    self.logits.unsqueeze(1).repeat(1, len(x), 1), tau=tau, hard=False, dim=-1
+                )  # use this to sample 1 mask for each cell
             # sample = F.gumbel_softmax(self.logits.unsqueeze(1).repeat(1, 1, 1), tau=tau, hard=False, dim=-1) # use this to just sample 1 mask!
             # sample = F.gumbel_softmax(self.logits.unsqueeze(1).repeat(1, len(x), 1), tau=tau, hard=False, dim=-1) # use this to sample 1 mask for each cell
             # k_hot has dims (n_subgraphs, n_features)
             k_hot = torch.max(sample, dim=0).values
             # repeat k-hot masks for each node based on their subgraph membership
             if self.mask_type == 0:
-                return k_hot[subgraph_id] # -> original (1 mask per subgraph)
+                return k_hot[subgraph_id]  # -> original (1 mask per subgraph)
             else:
-                return k_hot # use this to return 1 same mask for all or to return 1 mask per cell
+                return k_hot  # use this to return 1 same mask for all or to return 1 mask per cell
         else:
             # return hard k-hot mask for evaluation
             k_hot_ind = torch.argmax(self.logits, dim=1)
@@ -121,7 +118,6 @@ class Persist(torch.nn.Module):
         return pred
 
 
-
 class LitPersist(L.LightningModule):
     def __init__(self, config):
         super(LitPersist, self).__init__()
@@ -130,26 +126,20 @@ class LitPersist(L.LightningModule):
 
         # model
         cfg = self.hparams.model
-        self.model = Persist(gene_ch=cfg.gene_ch,
-                             hid_ch=cfg.hid_ch,
-                             out_ch=cfg.out_ch,
-                             n_select=cfg.n_select,
-                             mask_type=cfg.mask_type)
-
-
+        self.model = Persist(
+            gene_ch=cfg.gene_ch, hid_ch=cfg.hid_ch, out_ch=cfg.out_ch, n_select=cfg.n_select, mask_type=cfg.mask_type
+        )
 
         self.tautype = cfg.tautype
         # losses
         self.loss_ce = nn.CrossEntropyLoss()
         # metrics
         options = {"num_classes": cfg.out_ch, "top_k": 1, "multidim_average": "global"}
-        
+
         self.train_overall_acc = MulticlassAccuracy(average="weighted", **options)
         self.val_overall_acc = MulticlassAccuracy(average="weighted", **options)
 
-
         self.transform = lambda x: x
-
 
     def forward(self, gene_exp, edge_index, xyz, subgraph_id, tau, hard_):
         """
@@ -188,9 +178,7 @@ class LitPersist(L.LightningModule):
         train_loss_ce = self.loss_ce(celltype_pred[idx], data.celltype[idx])
 
         # calculate metrics
-        self.train_overall_acc(
-            preds=celltype_pred[idx], target=data.celltype[idx]
-        )
+        self.train_overall_acc(preds=celltype_pred[idx], target=data.celltype[idx])
 
         # log losses and metrics
         options = {
@@ -298,20 +286,15 @@ class LitPersist(L.LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.trainer.lr)
 
-        multistep_scheduler = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer,
-            milestones=[100],
-            gamma=0.1 
-        )
-        
+        multistep_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100], gamma=0.1)
+
         lr_factor = 0.5
         lookback = 10
         min_lr = 1e-5
         verbose = True
         persist_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, factor=lr_factor, patience=lookback // 2, min_lr=min_lr,
-            verbose=verbose)
-
+            optimizer, factor=lr_factor, patience=lookback // 2, min_lr=min_lr, verbose=verbose
+        )
 
         if self.hparams.trainer.lr_scheduler == "multistep":
             return {
@@ -322,10 +305,10 @@ class LitPersist(L.LightningModule):
                     # interval="epoch" means scheduler is called at epoch boundaries
                     # frequency=1 means scheduler is called every interval (every epoch)
                     # e.g. frequency=2 would call scheduler every 2 epochs
-                    "frequency": 1
-                }
+                    "frequency": 1,
+                },
             }
-            
+
         elif self.hparams.trainer.lr_scheduler == "constant":
             return optimizer
         elif self.hparams.trainer.lr_scheduler == "persist":
@@ -338,23 +321,22 @@ class LitPersist(L.LightningModule):
                     # frequency=1 means scheduler is called every interval (every epoch)
                     # e.g. frequency=2 would call scheduler every 2 epochs
                     "frequency": 1,
-                    "monitor": "val_loss_ce"
-                }
+                    "monitor": "val_loss_ce",
+                },
             }
-        
+
     def tau_schedule(self, type, epoch, total_epoch):
         start_tau = 10
-        end_tau = 0.01 
+        end_tau = 0.01
         # end_tau = 0.1
         mbsize = self.hparams.data.batch_size
         max_nepochs = self.hparams.trainer.max_epochs
 
-        if type == 'exp':
+        if type == "exp":
             tau = start_tau * (end_tau / start_tau) ** (epoch / total_epoch)
         elif type == "constant":
             tau = 0.1
         elif type == "persist":
-            tau = start_tau * (end_tau / start_tau) ** ( (epoch * mbsize) / (46333 * max_nepochs) )
-
+            tau = start_tau * (end_tau / start_tau) ** ((epoch * mbsize) / (46333 * max_nepochs))
 
         return tau

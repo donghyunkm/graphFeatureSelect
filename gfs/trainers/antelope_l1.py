@@ -1,16 +1,23 @@
+"""Training entrypoint for the L1-regularized feature-selection model: like ``antelope.py`` but uses
+``antelope_l1.LitGnnFs`` (``hemisphere_new`` data module, config ``antelope``); monitors
+``val_f1_overall`` and tests the best checkpoint."""
+
+import pickle
+import random
+
 import hydra
 import lightning as L
+import numpy as np
+import torch
 from lightning.pytorch import seed_everything
-from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
+from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
 from omegaconf import DictConfig, OmegaConf
-import pickle
+
 from gfs.data.hemisphere_new import PyGAnnDataGraphDataModule
 from gfs.models.antelope_l1 import LitGnnFs
 from gfs.utils import get_datetime, get_paths
-import torch
-import random
-import numpy as np
+
 
 def setup_seeds(seed):
     random.seed(seed)
@@ -19,6 +26,7 @@ def setup_seeds(seed):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
 
 @hydra.main(config_path="../configs", config_name="antelope", version_base="1.2")
 def main(config: DictConfig):
@@ -45,8 +53,7 @@ def main(config: DictConfig):
         every_n_epochs=1,
     )
 
-    lr_monitor = LearningRateMonitor(logging_interval='step')
-
+    lr_monitor = LearningRateMonitor(logging_interval="step")
 
     # data
     datamodule = PyGAnnDataGraphDataModule(
@@ -61,7 +68,6 @@ def main(config: DictConfig):
         rand_seed=config.data.rand_seed,
     )
 
-
     # model
     model = LitGnnFs(config)
 
@@ -72,14 +78,14 @@ def main(config: DictConfig):
         max_epochs=config.trainer.max_epochs,
         logger=tb_logger,
         callbacks=[checkpoint_callback, lr_monitor],
-        accelerator="gpu", 
+        accelerator="gpu",
         devices=1,
-        deterministic=True
+        deterministic=True,
         # accelerator="cpu"
     )
     trainer.fit(model=model, datamodule=datamodule)
     # pred_y = trainer.predict(ckpt_path="best", datamodule=datamodule)
-    
+
     # with open(checkpoint_path + '/pred_y.pkl', 'wb') as file:
     #     pickle.dump(pred_y, file)
 

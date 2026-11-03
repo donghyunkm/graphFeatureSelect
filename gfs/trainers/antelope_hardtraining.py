@@ -1,18 +1,24 @@
+"""Warm-start training entrypoint: like ``antelope.py`` (``hemisphere_new`` + ``antelope.LitGnnFs``)
+but loads weights from a hardcoded pretrained checkpoint (``load_state_dict(strict=False)``) before
+fitting, and monitors ``val_overall_acc`` instead of ``val_f1_overall``."""
+
+import pickle
+import random
+
 import hydra
 import lightning as L
+import numpy as np
+import torch
 from lightning.pytorch import seed_everything
-from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
+from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
 from omegaconf import DictConfig, OmegaConf
-import pickle
+
 # from gfs.data.hemisphere import PyGAnnDataGraphDataModule
 from gfs.data.hemisphere_new import PyGAnnDataGraphDataModule
-
 from gfs.models.antelope import LitGnnFs
 from gfs.utils import get_datetime, get_paths
-import torch
-import random
-import numpy as np
+
 
 def setup_seeds(seed):
     random.seed(seed)
@@ -21,6 +27,7 @@ def setup_seeds(seed):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
 
 @hydra.main(config_path="../configs", config_name="antelope", version_base="1.2")
 def main(config: DictConfig):
@@ -47,7 +54,7 @@ def main(config: DictConfig):
         every_n_epochs=1,
     )
 
-    lr_monitor = LearningRateMonitor(logging_interval='step')
+    lr_monitor = LearningRateMonitor(logging_interval="step")
 
     print("paths['data_root'] =", paths["data_root"], type(paths["data_root"]))
     print("config.data.path_train =", config.data.path_train, type(config.data.path_train))
@@ -74,7 +81,6 @@ def main(config: DictConfig):
     print("Missing keys:", missing)
     print("Unexpected keys:", unexpected)
 
-
     # fit wrapper
     trainer = L.Trainer(
         limit_train_batches=config.trainer.limit_train_batches,
@@ -82,9 +88,9 @@ def main(config: DictConfig):
         max_epochs=config.trainer.max_epochs,
         logger=tb_logger,
         callbacks=[checkpoint_callback, lr_monitor],
-        accelerator="gpu", 
+        accelerator="gpu",
         devices=1,
-        deterministic=True
+        deterministic=True,
         # accelerator="cpu"
     )
     trainer.fit(model=model, datamodule=datamodule)

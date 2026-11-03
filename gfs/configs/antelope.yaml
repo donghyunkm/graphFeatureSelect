@@ -36,7 +36,7 @@ model:
   gnn: "gat"
   xyz_status: true
   halfhop: true
-  tautype: "exp"
+  tautype: "old"
   trainmode: 0
   loss: "ce"
   fs_method: "persist"
@@ -44,6 +44,14 @@ model:
   sigma: 1.0
   lam: 0.01
   hard_training: false
+  # GR2ST-style GATv2 attention-entropy regularization (auxiliary training loss only).
+  # 0.0 disables it and preserves the ordinary GAT forward path (repo default). Requires gnn="gat".
+  attention_entropy_weight: 0.0
+  attention_entropy_eps: 1.0e-9
+  # Log the attention entropy + neighbourhood-sharpness diagnostics WITHOUT applying the loss. Set true on a
+  # baseline (weight=0) run to make its attention stats directly comparable to a regularized run. Requires
+  # gnn="gat". Numerically free (bit-identical logits); off by default so existing runs are unaffected.
+  log_attention_stats: false
 
 logging:
   log_dir: "logs"

@@ -1,5 +1,4 @@
 # config.toml
 
 # Directories
-data_root = "/data/users1/dkim195/graphFeatureSelect/data/"
-runs_root = "/data/users1/dkim195/graphFeatureSelect/runs/"
+data_root = "/home/donghyun.kim/graphFeatureSelect/data/"
